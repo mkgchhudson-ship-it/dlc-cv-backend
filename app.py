@@ -1,88 +1,201 @@
 """
 Direct Labour Consult — CV Analysis Backend
 ============================================
-Flask API that accepts CV uploads, extracts text,
-sends to Claude for structured analysis, and returns JSON.
+Production-ready Flask API.
+
+Fixes applied:
+  - Anthropic client initialised without unsupported kwargs
+  - Universal CV text extraction pipeline with fallbacks
+  - Structured JSON response format throughout
+  - Full request logging to console (visible in Render logs)
+  - 500-proof error handling on every path
 
 Files are NEVER stored — deleted immediately after processing.
 """
 
-import os
-import uuid
+import io
 import json
+import logging
+import os
+import re
 import tempfile
+import traceback
+import uuid
+from datetime import datetime, timezone
+
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-import anthropic
-import pdfplumber
-from docx import Document
 
+# ── Logging ──────────────────────────────────────────────────────────────────
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%Y-%m-%dT%H:%M:%SZ",
+)
+log = logging.getLogger("dlc_cv")
+
+# ── App ───────────────────────────────────────────────────────────────────────
 app = Flask(__name__)
+CORS(app, origins=["*"])          # tighten to your domain in production
 
-# Allow requests from your Netlify domain + localhost for dev
-# STEP 3: Replace with your actual Netlify URL
-ALLOWED_ORIGINS = [
-    "https://cv.directlabourconsult.com",
-    "https://directlabourconsult.com",
-    "http://localhost:3000",
-    "http://localhost:5000",
-    "http://127.0.0.1:5500",
-    "*",  # Remove this in production — keep only your domain
-]
-CORS(app, origins=ALLOWED_ORIGINS)
-
-UPLOAD_DIR        = tempfile.gettempdir()
-ALLOWED_EXTS      = {"pdf", "doc", "docx"}
-MAX_FILE_BYTES    = 10 * 1024 * 1024   # 10 MB
-MAX_TEXT_CHARS    = 12000              # Trim very long CVs
+UPLOAD_DIR     = tempfile.gettempdir()
+ALLOWED_EXTS   = {"pdf", "doc", "docx"}
+MAX_FILE_BYTES = 10 * 1024 * 1024   # 10 MB
+MAX_TEXT_CHARS = 12_000             # trim very long CVs before sending to Claude
 
 
-# ── HELPERS ─────────────────────────────────────────────────────────
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
-def allowed(filename: str) -> bool:
-    return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTS
+def _allowed_ext(filename: str) -> bool:
+    return (
+        "." in filename
+        and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTS
+    )
 
 
-def extract_pdf(path: str) -> str:
-    """Extract text from a PDF using pdfplumber."""
+def _get_ext(filename: str) -> str:
+    return filename.rsplit(".", 1)[1].lower() if "." in filename else ""
+
+
+# ── Text extraction pipeline ─────────────────────────────────────────────────
+
+def _extract_pdf_pymupdf(path: str) -> str:
+    """Step 1 — PyMuPDF (fastest, best for text PDFs)."""
+    import fitz  # PyMuPDF
+    text_parts = []
+    with fitz.open(path) as doc:
+        for page in doc:
+            text_parts.append(page.get_text("text"))
+    return "\n".join(text_parts).strip()
+
+
+def _extract_pdf_pdfminer(path: str) -> str:
+    """Step 2 — pdfminer.six (better for complex layouts)."""
+    from pdfminer.high_level import extract_text as pm_extract
+    return (pm_extract(path) or "").strip()
+
+
+def _extract_pdf_ocr(path: str) -> str:
+    """Step 3 — pytesseract OCR (scanned/image PDFs)."""
+    import fitz
+    import pytesseract
+    from PIL import Image
+
+    text_parts = []
+    with fitz.open(path) as doc:
+        for page in doc:
+            pix = page.get_pixmap(dpi=200)
+            img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+            text_parts.append(pytesseract.image_to_string(img))
+    return "\n".join(text_parts).strip()
+
+
+def _extract_docx(path: str) -> str:
+    """Step 4 — python-docx for .docx files."""
+    from docx import Document
+    doc = Document(path)
     parts = []
-    with pdfplumber.open(path) as pdf:
-        for page in pdf.pages:
-            t = page.extract_text()
-            if t:
-                parts.append(t)
+    for para in doc.paragraphs:
+        if para.text.strip():
+            parts.append(para.text)
+    # Also pull table cells
+    for table in doc.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                if cell.text.strip():
+                    parts.append(cell.text)
     return "\n".join(parts).strip()
 
 
-def extract_docx(path: str) -> str:
-    """Extract text from a DOCX file."""
-    doc = Document(path)
-    return "\n".join(p.text for p in doc.paragraphs if p.text.strip())
+def _extract_doc_fallback(path: str) -> str:
+    """Step 5 — basic .doc extraction via textract or raw byte scan."""
+    try:
+        import textract
+        return textract.process(path).decode("utf-8", errors="ignore").strip()
+    except Exception:
+        pass
+    # Last resort: scan raw bytes for printable ASCII runs
+    try:
+        with open(path, "rb") as f:
+            raw = f.read()
+        text = raw.decode("latin-1", errors="ignore")
+        # Keep only printable characters and whitespace
+        cleaned = re.sub(r"[^\x20-\x7E\n\r\t]", " ", text)
+        cleaned = re.sub(r" {3,}", " ", cleaned)
+        return cleaned.strip()
+    except Exception:
+        return ""
 
 
-def extract_text(path: str, ext: str) -> str:
-    """Route extraction by file type."""
-    if ext == "pdf":
-        return extract_pdf(path)
+def extract_text(path: str, ext: str) -> tuple[str, str]:
+    """
+    Universal extraction pipeline.
+    Returns (text, method_used).
+    Never raises — always returns something or empty string.
+    """
     if ext in ("doc", "docx"):
-        return extract_docx(path)
-    return ""
+        if ext == "docx":
+            try:
+                text = _extract_docx(path)
+                if text:
+                    return text, "python-docx"
+            except Exception as exc:
+                log.warning("python-docx failed: %s", exc)
+        # .doc or docx fallback
+        try:
+            text = _extract_doc_fallback(path)
+            if text:
+                return text, "doc-fallback"
+        except Exception as exc:
+            log.warning("doc-fallback failed: %s", exc)
+        return "", "none"
+
+    # PDF pipeline
+    try:
+        text = _extract_pdf_pymupdf(path)
+        if text and len(text) >= 80:
+            return text, "pymupdf"
+        log.info("PyMuPDF returned sparse text (%d chars), trying pdfminer", len(text))
+    except Exception as exc:
+        log.warning("PyMuPDF failed: %s", exc)
+
+    try:
+        text = _extract_pdf_pdfminer(path)
+        if text and len(text) >= 80:
+            return text, "pdfminer"
+        log.info("pdfminer returned sparse text (%d chars), trying OCR", len(text))
+    except Exception as exc:
+        log.warning("pdfminer failed: %s", exc)
+
+    try:
+        text = _extract_pdf_ocr(path)
+        if text:
+            return text, "ocr-tesseract"
+        log.warning("OCR returned empty text")
+    except Exception as exc:
+        log.warning("OCR failed: %s", exc)
+
+    return "", "none"
 
 
-def analyse(cv_text: str, name: str) -> dict:
+# ── Claude analysis ───────────────────────────────────────────────────────────
+
+def analyse_cv(cv_text: str, name: str) -> dict:
     """
-    Send CV text to Claude and receive a structured JSON analysis.
-    Returns a Python dict ready to be serialised.
+    Send extracted CV text to Claude and return structured analysis dict.
+    Raises on unrecoverable errors so the caller can handle them.
     """
+    # ── Fix: clean initialisation — no unsupported kwargs ──
+    from anthropic import Anthropic
+    client = Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+
     # Trim to avoid token bloat
     if len(cv_text) > MAX_TEXT_CHARS:
         cv_text = cv_text[:MAX_TEXT_CHARS] + "\n[... document continues ...]"
 
-    client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
-
     prompt = f"""You are a senior HR consultant at Direct Labour Consult, an HR advisory firm
-based in Gaborone, Botswana. You are reviewing a submitted CV with the same rigour
-a hiring manager would apply when screening candidates for competitive roles.
+based in Gaborone, Botswana. Review this CV with the same rigour a hiring manager
+applies when screening candidates for competitive roles.
 
 Candidate name: {name}
 
@@ -92,40 +205,40 @@ CV TEXT:
 ---
 
 Return ONLY a raw JSON object — no markdown, no code fences, no preamble.
-Use exactly this structure:
+Exact structure required:
 
 {{
   "candidate_name": "{name}",
-  "overall_score": <integer 0–100>,
+  "overall_score": <integer 0-100>,
   "market_readiness": "<Excellent | Strong | Developing | Needs Improvement>",
-  "executive_summary": "<2–3 honest sentences on the CV's current market position>",
+  "executive_summary": "<2-3 honest sentences on this CV's current market position>",
   "sections": {{
     "professional_summary": {{
-      "score": <integer 0–100>,
+      "score": <integer 0-100>,
       "feedback": "<specific feedback on clarity, strength, positioning>",
       "strengths": ["<strength>", "<strength>"],
       "improvements": ["<improvement>", "<improvement>"]
     }},
     "work_experience": {{
-      "score": <integer 0–100>,
+      "score": <integer 0-100>,
       "feedback": "<feedback on impact, achievements, structure>",
       "strengths": ["<strength>", "<strength>"],
       "improvements": ["<improvement>", "<improvement>"]
     }},
     "skills": {{
-      "score": <integer 0–100>,
+      "score": <integer 0-100>,
       "feedback": "<feedback on relevance, keyword alignment>",
       "strengths": ["<strength>"],
       "improvements": ["<improvement>", "<improvement>"]
     }},
     "formatting_readability": {{
-      "score": <integer 0–100>,
+      "score": <integer 0-100>,
       "feedback": "<feedback on layout, hierarchy, readability>",
       "strengths": ["<strength>"],
       "improvements": ["<improvement>"]
     }},
     "ats_compatibility": {{
-      "score": <integer 0–100>,
+      "score": <integer 0-100>,
       "feedback": "<feedback on ATS keyword density, formatting, searchability>",
       "strengths": ["<strength>"],
       "improvements": ["<improvement>", "<improvement>"]
@@ -138,14 +251,14 @@ Use exactly this structure:
     "original_excerpt": "<original text, max 80 words>",
     "rewritten": "<professionally rewritten version demonstrating best practice>"
   }},
-  "advisory_note": "<1–2 sentences of personalised DLC advisory guidance for this candidate>"
+  "advisory_note": "<1-2 sentences of personalised DLC advisory guidance>"
 }}
 
 Rules:
-- Be direct, specific, honest. Avoid vague praise.
+- Be direct, specific, and honest. Avoid vague praise.
 - Every improvement must be concrete and actionable.
 - The rewrite must be meaningfully better — not just rephrased.
-- Score 0–100 where 75+ = strong, 50–74 = developing, <50 = needs work."""
+- Score 0-100: 75+ = strong, 50-74 = developing, <50 = needs work."""
 
     msg = client.messages.create(
         model="claude-sonnet-4-20250514",
@@ -155,7 +268,7 @@ Rules:
 
     raw = msg.content[0].text.strip()
 
-    # Strip accidental markdown code fences
+    # Strip accidental markdown fences
     if raw.startswith("```"):
         raw = raw.split("```")[1]
         if raw.startswith("json"):
@@ -165,82 +278,176 @@ Rules:
     return json.loads(raw)
 
 
-# ── ROUTES ──────────────────────────────────────────────────────────
+# ── Routes ────────────────────────────────────────────────────────────────────
 
 @app.route("/health", methods=["GET"])
 def health():
-    """Health check — used by Render to verify the service is up."""
-    return jsonify({"status": "ok", "service": "DLC CV Analyser"})
+    """Health check — used by Render to confirm the service is alive."""
+    return jsonify({
+        "status": "ok",
+        "service": "DLC CV Analyser",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    })
 
 
 @app.route("/analyze", methods=["POST"])
 def analyze():
     """
     POST /analyze
-    Form fields: name, email
-    File field:  cv (PDF, DOC, DOCX)
-    Returns:     JSON analysis result
+    Accepts multipart/form-data: name, email, cv (file)
+    Always returns structured JSON.
     """
-    # ── Validate form fields
+    req_id    = str(uuid.uuid4())[:8]
+    timestamp = datetime.now(timezone.utc).isoformat()
+    tmp_path  = None
+
+    # ── 1. Validate form fields ──────────────────────────────────────
     name  = (request.form.get("name")  or "").strip()
     email = (request.form.get("email") or "").strip()
 
     if not name:
-        return jsonify({"error": "Name is required."}), 400
+        log.warning("[%s] rejected — missing name", req_id)
+        return jsonify({"success": False, "error": "Name is required."}), 400
+
     if not email or "@" not in email:
-        return jsonify({"error": "A valid email address is required."}), 400
+        log.warning("[%s] rejected — invalid email: %s", req_id, email)
+        return jsonify({"success": False, "error": "A valid email address is required."}), 400
+
     if "cv" not in request.files:
-        return jsonify({"error": "No CV file was uploaded."}), 400
+        log.warning("[%s] rejected — no file uploaded", req_id)
+        return jsonify({"success": False, "error": "No CV file was uploaded."}), 400
 
     file = request.files["cv"]
-    if not file.filename:
-        return jsonify({"error": "No file was selected."}), 400
-    if not allowed(file.filename):
-        return jsonify({"error": "Only PDF and Word documents (.pdf, .doc, .docx) are accepted."}), 400
+    if not file or not file.filename:
+        log.warning("[%s] rejected — empty filename", req_id)
+        return jsonify({"success": False, "error": "No file was selected."}), 400
 
-    # ── Save to temp
-    ext       = file.filename.rsplit(".", 1)[1].lower()
-    tmp_name  = f"{uuid.uuid4()}.{ext}"
-    tmp_path  = os.path.join(UPLOAD_DIR, tmp_name)
+    if not _allowed_ext(file.filename):
+        log.warning("[%s] rejected — bad extension: %s", req_id, file.filename)
+        return jsonify({
+            "success": False,
+            "error": "Only PDF and Word documents (.pdf, .doc, .docx) are accepted.",
+        }), 400
+
+    ext = _get_ext(file.filename)
+
+    log.info(
+        "[%s] request received | name=%s | email=%s | file=%s | ts=%s",
+        req_id, name, email, file.filename, timestamp,
+    )
 
     try:
+        # ── 2. Save to temp ──────────────────────────────────────────
+        tmp_path = os.path.join(UPLOAD_DIR, f"{req_id}_{uuid.uuid4()}.{ext}")
         file.save(tmp_path)
 
-        if os.path.getsize(tmp_path) > MAX_FILE_BYTES:
-            return jsonify({"error": "File exceeds the 10 MB size limit."}), 400
-
-        # ── Extract text
-        cv_text = extract_text(tmp_path, ext)
-
-        if not cv_text or len(cv_text) < 80:
+        file_size = os.path.getsize(tmp_path)
+        if file_size > MAX_FILE_BYTES:
+            log.warning("[%s] rejected — file too large: %d bytes", req_id, file_size)
             return jsonify({
-                "error": (
-                    "Could not extract readable text from this file. "
-                    "Please ensure the CV is not a scanned image and contains selectable text."
-                )
+                "success": False,
+                "error": "File exceeds the 10 MB size limit.",
             }), 400
 
-        # ── Analyse
-        result        = analyse(cv_text, name)
+        log.info("[%s] saved to temp: %s (%d bytes)", req_id, tmp_path, file_size)
+
+        # ── 3. Extract text ──────────────────────────────────────────
+        cv_text, method = extract_text(tmp_path, ext)
+        log.info("[%s] extraction method=%s | chars=%d", req_id, method, len(cv_text))
+
+        if not cv_text or len(cv_text) < 80:
+            log.warning("[%s] extraction yielded insufficient text (%d chars)", req_id, len(cv_text))
+            return jsonify({
+                "success": False,
+                "error": (
+                    "Could not extract readable text from this file. "
+                    "Please ensure the CV is not a scanned image and contains selectable text. "
+                    "If it is a scanned document, please save it as a Word file and resubmit."
+                ),
+            }), 400
+
+        # ── 4. Analyse with Claude ───────────────────────────────────
+        log.info("[%s] sending to Claude for analysis", req_id)
+        result = analyse_cv(cv_text, name)
         result["email"] = email
-        return jsonify(result)
+        result["request_id"] = req_id
 
-    except json.JSONDecodeError:
-        return jsonify({"error": "Analysis produced an unexpected response. Please try again."}), 500
-    except anthropic.APIError as e:
-        return jsonify({"error": f"AI service error: {str(e)}"}), 502
-    except Exception as e:
-        return jsonify({"error": f"An unexpected error occurred: {str(e)}"}), 500
+        log.info(
+            "[%s] SUCCESS | name=%s | score=%s | readiness=%s | method=%s",
+            req_id,
+            name,
+            result.get("overall_score"),
+            result.get("market_readiness"),
+            method,
+        )
+
+        return jsonify({"success": True, "data": result})
+
+    # ── Specific error handling ──────────────────────────────────────
+    except json.JSONDecodeError as exc:
+        log.error("[%s] JSON decode error from Claude: %s", req_id, exc)
+        return jsonify({
+            "success": False,
+            "error": "Analysis produced an unexpected response format. Please try again.",
+        }), 500
+
+    except KeyError as exc:
+        if "ANTHROPIC_API_KEY" in str(exc):
+            log.error("[%s] ANTHROPIC_API_KEY environment variable is not set", req_id)
+            return jsonify({
+                "success": False,
+                "error": "Server configuration error. Please contact support.",
+            }), 500
+        log.error("[%s] KeyError: %s", req_id, exc)
+        return jsonify({"success": False, "error": "An internal error occurred."}), 500
+
+    except Exception as exc:
+        # Catch Anthropic API errors by string match (avoids import version issues)
+        exc_type = type(exc).__name__
+        exc_str  = str(exc)
+
+        if "APIError" in exc_type or "APIStatusError" in exc_type:
+            log.error("[%s] Anthropic API error: %s", req_id, exc_str)
+            return jsonify({
+                "success": False,
+                "error": "AI service error. Please try again in a moment.",
+            }), 502
+
+        if "RateLimitError" in exc_type:
+            log.error("[%s] Anthropic rate limit hit", req_id)
+            return jsonify({
+                "success": False,
+                "error": "Service is temporarily busy. Please try again in 30 seconds.",
+            }), 429
+
+        if "AuthenticationError" in exc_type:
+            log.error("[%s] Anthropic authentication error", req_id)
+            return jsonify({
+                "success": False,
+                "error": "Server authentication error. Please contact support.",
+            }), 500
+
+        log.error(
+            "[%s] Unhandled exception: %s — %s\n%s",
+            req_id, exc_type, exc_str, traceback.format_exc(),
+        )
+        return jsonify({
+            "success": False,
+            "error": f"An unexpected error occurred. Please try again.",
+        }), 500
+
     finally:
-        # ── ALWAYS delete the temp file
-        try:
-            if os.path.exists(tmp_path):
-                os.remove(tmp_path)
-        except Exception:
-            pass
+        # ── Always delete the temp file ──────────────────────────────
+        if tmp_path:
+            try:
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+                    log.info("[%s] temp file deleted", req_id)
+            except Exception as cleanup_exc:
+                log.warning("[%s] could not delete temp file: %s", req_id, cleanup_exc)
 
 
-# ── ENTRY POINT ─────────────────────────────────────────────────────
+# ── Entry point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
