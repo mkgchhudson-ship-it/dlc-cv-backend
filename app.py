@@ -1,14 +1,11 @@
 """
 Direct Labour Consult — CV Analysis Backend
-NO SDK VERSION — uses raw HTTP requests to Anthropic API
-Bypasses httpx/proxies compatibility issue completely.
+Uses raw HTTP requests — no Anthropic SDK, no httpx, no proxies issue.
 """
 
-import io
 import json
 import logging
 import os
-import re
 import tempfile
 import traceback
 import uuid
@@ -32,7 +29,6 @@ UPLOAD_DIR     = tempfile.gettempdir()
 ALLOWED_EXTS   = {"pdf", "doc", "docx"}
 MAX_FILE_BYTES = 10 * 1024 * 1024
 MAX_TEXT_CHARS = 12000
-ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
 
 
 def _allowed_ext(filename):
@@ -44,49 +40,22 @@ def _get_ext(filename):
 
 # ── Text extraction ───────────────────────────────────────────────────────────
 
-def _extract_pdf_pymupdf(path):
-    import fitz
-    parts = []
-    with fitz.open(path) as doc:
-        for page in doc:
-            parts.append(page.get_text("text"))
-    return "\n".join(parts).strip()
-
-def _extract_pdf_pdfminer(path):
-    from pdfminer.high_level import extract_text as pm_extract
-    return (pm_extract(path) or "").strip()
-
-def _extract_docx(path):
-    from docx import Document
-    doc = Document(path)
-    parts = [p.text for p in doc.paragraphs if p.text.strip()]
-    for table in doc.tables:
-        for row in table.rows:
-            for cell in row.cells:
-                if cell.text.strip():
-                    parts.append(cell.text)
-    return "\n".join(parts).strip()
-
-def extract_text(path, ext):
-    if ext in ("doc", "docx"):
-        try:
-            text = _extract_docx(path)
-            if text:
-                return text, "python-docx"
-        except Exception as e:
-            log.warning("docx extraction failed: %s", e)
-        return "", "none"
-
-    # PDF pipeline
+def _extract_pdf(path):
     try:
-        text = _extract_pdf_pymupdf(path)
+        import fitz
+        parts = []
+        with fitz.open(path) as doc:
+            for page in doc:
+                parts.append(page.get_text("text"))
+        text = "\n".join(parts).strip()
         if text and len(text) >= 80:
             return text, "pymupdf"
     except Exception as e:
         log.warning("PyMuPDF failed: %s", e)
 
     try:
-        text = _extract_pdf_pdfminer(path)
+        from pdfminer.high_level import extract_text as pm_extract
+        text = (pm_extract(path) or "").strip()
         if text and len(text) >= 80:
             return text, "pdfminer"
     except Exception as e:
@@ -94,8 +63,30 @@ def extract_text(path, ext):
 
     return "", "none"
 
+def _extract_docx(path):
+    try:
+        from docx import Document
+        doc = Document(path)
+        parts = [p.text for p in doc.paragraphs if p.text.strip()]
+        for table in doc.tables:
+            for row in table.rows:
+                for cell in row.cells:
+                    if cell.text.strip():
+                        parts.append(cell.text)
+        text = "\n".join(parts).strip()
+        if text:
+            return text, "python-docx"
+    except Exception as e:
+        log.warning("docx extraction failed: %s", e)
+    return "", "none"
 
-# ── Claude via raw HTTP (no SDK, no httpx, no proxies issue) ──────────────────
+def extract_text(path, ext):
+    if ext in ("doc", "docx"):
+        return _extract_docx(path)
+    return _extract_pdf(path)
+
+
+# ── Claude via raw HTTP — NO SDK, NO HTTPX, NO PROXIES ───────────────────────
 
 def analyse_cv(cv_text, name):
     if len(cv_text) > MAX_TEXT_CHARS:
@@ -103,7 +94,7 @@ def analyse_cv(cv_text, name):
 
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
     if not api_key:
-        raise ValueError("ANTHROPIC_API_KEY not set")
+        raise ValueError("ANTHROPIC_API_KEY environment variable not set")
 
     prompt = f"""You are a senior HR consultant at Direct Labour Consult, Gaborone, Botswana.
 Review this CV with the rigour a hiring manager applies when screening candidates.
@@ -125,7 +116,7 @@ Return ONLY a raw JSON object — no markdown, no code fences, no preamble.
   "sections": {{
     "professional_summary": {{
       "score": <integer 0-100>,
-      "feedback": "<specific feedback>",
+      "feedback": "<specific feedback on clarity, strength, positioning>",
       "strengths": ["<strength>", "<strength>"],
       "improvements": ["<improvement>", "<improvement>"]
     }},
@@ -162,7 +153,10 @@ Return ONLY a raw JSON object — no markdown, no code fences, no preamble.
     "rewritten": "<professionally rewritten version>"
   }},
   "advisory_note": "<1-2 sentences of personalised DLC advisory guidance>"
-}}"""
+}}
+
+Rules: Be direct and specific. Every improvement must be actionable.
+Score: 75+ = strong, 50-74 = developing, below 50 = needs work."""
 
     headers = {
         "x-api-key": api_key,
@@ -171,25 +165,24 @@ Return ONLY a raw JSON object — no markdown, no code fences, no preamble.
     }
 
     payload = {
-        "model": "claude-sonnet-4-20250514",
+        "model": "claude-opus-4-5",
         "max_tokens": 2500,
         "messages": [{"role": "user", "content": prompt}],
     }
 
     resp = requests.post(
-        ANTHROPIC_API_URL,
+        "https://api.anthropic.com/v1/messages",
         headers=headers,
         json=payload,
         timeout=90,
     )
 
     if resp.status_code != 200:
-        raise RuntimeError(f"Anthropic API error {resp.status_code}: {resp.text[:300]}")
+        raise RuntimeError(f"Anthropic API {resp.status_code}: {resp.text[:400]}")
 
     data = resp.json()
     raw = data["content"][0]["text"].strip()
 
-    # Strip markdown fences if present
     if raw.startswith("```"):
         raw = raw.split("```")[1]
         if raw.startswith("json"):
@@ -213,7 +206,6 @@ def health():
 @app.route("/analyze", methods=["POST"])
 def analyze():
     req_id   = str(uuid.uuid4())[:8]
-    ts       = datetime.now(timezone.utc).isoformat()
     tmp_path = None
 
     name  = (request.form.get("name")  or "").strip()
@@ -233,9 +225,7 @@ def analyze():
         return jsonify({"success": False, "error": "Only PDF, DOC, DOCX accepted."}), 400
 
     ext = _get_ext(file.filename)
-
-    log.info("[%s] received | name=%s | email=%s | file=%s | ts=%s",
-             req_id, name, email, file.filename, ts)
+    log.info("[%s] received | name=%s | email=%s | file=%s", req_id, name, email, file.filename)
 
     try:
         tmp_path = os.path.join(UPLOAD_DIR, f"{req_id}_{uuid.uuid4()}.{ext}")
@@ -249,7 +239,7 @@ def analyze():
 
         if not cv_text or len(cv_text) < 80:
             return jsonify({"success": False,
-                "error": "Could not extract text. Please ensure the CV contains selectable text."}), 400
+                "error": "Could not extract text from this file. Please ensure the CV contains selectable text and is not a scanned image."}), 400
 
         log.info("[%s] sending to Claude", req_id)
         result = analyse_cv(cv_text, name)
