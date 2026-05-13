@@ -1,0 +1,11 @@
+# Force serve static HTML files before SPA catch-all
+/cv-analysis.html         /cv-analysis.html         200!
+/cv-report.html           /cv-analysis.html          302
+/payment-success.html     /payment-success.html      200!
+/dlc-admin.html           /dlc-admin.html            200!
+/recruiter.html           /recruiter.html            200!
+/recruiter-upload.html    /recruiter-upload.html     200!
+/recruiter                /recruiter.html             301
+
+# SPA fallback for React app
+/*    /index.html    200

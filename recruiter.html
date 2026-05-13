@@ -1,0 +1,635 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"/>
+<meta http-equiv="Pragma" content="no-cache"/>
+<meta http-equiv="Expires" content="0"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>Hiring Decision Report — Recruiter Console | Direct Labour Consult</title>
+<meta name="description" content="Upload candidate CVs and receive a structured Hiring Decision Report — with clear recommendations on who to hire, who to consider, and who to avoid."/>
+<style>
+/* ── EXACT TOKEN SET FROM cv-analysis.html ── */
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+:root{
+  --gold:#d4af37;--gold-l:#e8cc6a;--gold-d:#a88820;
+  --gold-dim:rgba(212,175,55,.10);--gold-b:rgba(212,175,55,.25);
+  --ink:#04060a;--ink2:#080d14;--ink3:#0d1520;--ink4:#111e2e;--ink5:#16243a;
+  --t1:#f0f4f8;--t2:rgba(240,244,248,.60);--t3:rgba(240,244,248,.35);--t4:rgba(240,244,248,.18);
+  --green:#16a34a;--r:12px;--rl:18px;--rxl:24px;
+}
+body{font-family:'Georgia','Times New Roman',serif;background:var(--ink);color:var(--t1);line-height:1.7;overflow-x:hidden}
+.sans{font-family:-apple-system,'Helvetica Neue',Arial,sans-serif}
+::-webkit-scrollbar{width:4px}::-webkit-scrollbar-track{background:var(--ink)}::-webkit-scrollbar-thumb{background:var(--gold-b);border-radius:2px}
+::selection{background:rgba(212,175,55,.25);color:#fff}
+
+/* NAV — identical to cv-analysis */
+.nav{position:sticky;top:0;z-index:200;height:62px;display:flex;align-items:center;justify-content:space-between;padding:0 clamp(1.25rem,5vw,3rem);background:rgba(4,6,10,.96);backdrop-filter:blur(16px);border-bottom:1px solid rgba(212,175,55,.12)}
+.nav-logo{display:flex;align-items:center;gap:10px;text-decoration:none}
+.nav-mark{width:36px;height:36px;border-radius:8px;background:var(--gold-dim);border:1px solid var(--gold-b);display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;color:var(--gold)}
+.nav-tm{font-size:13px;font-weight:600;color:#fff;font-family:-apple-system,Arial,sans-serif}
+.nav-ts{font-size:9px;color:var(--t3);font-family:-apple-system,Arial,sans-serif;letter-spacing:.12em;text-transform:uppercase}
+.nav-r{display:flex;align-items:center;gap:16px}
+.nav-lk{font-family:-apple-system,Arial,sans-serif;font-size:12px;color:var(--t3);text-decoration:none;transition:color .15s}
+.nav-lk:hover{color:var(--gold)}
+.nav-ct{font-family:-apple-system,Arial,sans-serif;font-size:11px;font-weight:700;letter-spacing:.10em;text-transform:uppercase;color:var(--gold);background:var(--gold-dim);border:1px solid var(--gold-b);padding:7px 16px;border-radius:20px;text-decoration:none}
+
+/* HERO — identical structure */
+.hero{position:relative;min-height:92vh;display:flex;align-items:center;justify-content:center;text-align:center;overflow:hidden;padding:clamp(5rem,10vw,8rem) clamp(1.25rem,5vw,2rem)}
+.hero-bg{position:absolute;inset:0;background:url('/images/business-boardroom.jpg') center/cover no-repeat;}
+.hero-bg::after{content:'';position:absolute;inset:0;background:linear-gradient(160deg,rgba(4,6,10,0.82) 0%,rgba(4,6,10,0.76) 60%,rgba(4,6,10,0.85) 100%)}
+.hero-grid{position:absolute;inset:0;z-index:1;pointer-events:none;background-image:linear-gradient(rgba(212,175,55,.035) 1px,transparent 1px),linear-gradient(90deg,rgba(212,175,55,.035) 1px,transparent 1px);background-size:72px 72px;mask-image:radial-gradient(ellipse 80% 80% at 50% 40%,black,transparent)}
+.hero-c{position:relative;z-index:2;max-width:860px;margin:0 auto}
+.h-ey{display:inline-flex;align-items:center;gap:8px;font-family:-apple-system,Arial,sans-serif;font-size:10px;font-weight:700;letter-spacing:.22em;text-transform:uppercase;color:var(--gold);background:var(--gold-dim);border:1px solid var(--gold-b);padding:6px 20px;border-radius:24px;margin-bottom:32px}
+.h-ey::before{content:'';width:5px;height:5px;border-radius:50%;background:var(--gold);animation:pulse 2s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.5;transform:scale(.8)}}
+h1.hero-h{font-size:clamp(2.4rem,6vw,4.4rem);font-weight:700;line-height:1.05;letter-spacing:-.02em;margin-bottom:28px}
+.gold{color:var(--gold)}.dim{color:var(--t2)}
+.hero-sub{font-size:clamp(1rem,2vw,1.2rem);color:var(--t2);max-width:620px;margin:0 auto 3rem;line-height:1.85}
+.hero-acts{display:flex;gap:16px;justify-content:center;flex-wrap:wrap;margin-bottom:4rem}
+.btn-g{display:inline-flex;align-items:center;gap:8px;padding:16px 36px;background:var(--gold);color:var(--ink);font-family:-apple-system,Arial,sans-serif;font-weight:800;font-size:15px;border:none;border-radius:10px;cursor:pointer;text-decoration:none;transition:background .15s,box-shadow .15s}
+.btn-g:hover{background:var(--gold-l);box-shadow:0 0 32px rgba(212,175,55,.25)}
+.btn-gh{display:inline-flex;align-items:center;gap:8px;padding:15px 28px;background:transparent;color:var(--t1);font-family:-apple-system,Arial,sans-serif;font-weight:600;font-size:14px;border:1px solid var(--t4);border-radius:10px;cursor:pointer;text-decoration:none;transition:border-color .15s,color .15s}
+.btn-gh:hover{border-color:var(--gold-b);color:var(--gold)}
+.h-stats{display:grid;grid-template-columns:repeat(4,1fr);max-width:700px;margin:0 auto;border:1px solid rgba(212,175,55,.12);border-radius:var(--rl);overflow:hidden;background:rgba(13,21,32,.6)}
+.h-stat{padding:20px 16px;text-align:center;border-right:1px solid rgba(212,175,55,.08)}
+.h-stat:last-child{border-right:none}
+.hs-n{font-family:Georgia,serif;font-size:1.9rem;font-weight:700;color:var(--gold);line-height:1;margin-bottom:4px}
+.hs-l{font-family:-apple-system,Arial,sans-serif;font-size:10px;color:var(--t3);letter-spacing:.10em;text-transform:uppercase}
+@media(max-width:540px){.h-stats{grid-template-columns:repeat(2,1fr)}.h-stat:nth-child(2){border-right:none}.h-stat:nth-child(3){border-top:1px solid rgba(212,175,55,.08)}}
+
+/* DIVIDER */
+.div{border:none;height:1px;background:linear-gradient(90deg,transparent,var(--gold-b),transparent)}
+
+/* SECTION */
+.sec{padding:clamp(4rem,8vw,6rem) clamp(1.25rem,5vw,2rem)}
+.con{max-width:1060px;margin:0 auto}.con-sm{max-width:760px;margin:0 auto}
+.ey{font-family:-apple-system,Arial,sans-serif;font-size:10px;font-weight:700;letter-spacing:.22em;text-transform:uppercase;color:var(--gold);display:flex;align-items:center;gap:10px;margin-bottom:18px}
+.ey::before{content:'';width:24px;height:2px;background:var(--gold);border-radius:1px;flex-shrink:0}
+.sec-h{font-size:clamp(1.7rem,4vw,2.6rem);font-weight:700;line-height:1.15;margin-bottom:16px}
+.sec-p{font-family:-apple-system,Arial,sans-serif;font-size:16px;color:var(--t2);line-height:1.85;max-width:580px}
+
+/* WHAT WE ASSESS — reuses del-sec / del-grid / del-c pattern */
+.del-sec{background:var(--ink2)}
+.del-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px;margin-top:3rem}
+.del-c{background:var(--ink4);border:1px solid rgba(255,255,255,.05);border-radius:var(--rl);padding:28px 24px;display:flex;gap:18px;transition:border-color .2s,transform .2s}
+.del-c:hover{border-color:var(--gold-b);transform:translateY(-2px)}
+.del-ic{width:44px;height:44px;border-radius:10px;background:var(--gold-dim);border:1px solid var(--gold-b);display:flex;align-items:center;justify-content:center;font-size:1.2rem;flex-shrink:0;margin-top:2px}
+.del-tt{font-size:1rem;font-weight:700;color:#fff;margin-bottom:6px}
+.del-ds{font-family:-apple-system,Arial,sans-serif;font-size:13px;color:var(--t3);line-height:1.7}
+
+/* HOW IT WORKS — reuses proc-sec / proc-steps / ps */
+.proc-sec{background:var(--ink3)}
+.proc-steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:2px;margin-top:3rem;border:1px solid rgba(255,255,255,.05);border-radius:var(--rl);overflow:hidden}
+.ps{background:var(--ink4);padding:28px 24px;border-right:1px solid rgba(255,255,255,.04);position:relative}
+.ps:last-child{border-right:none}
+.ps-n{font-family:Georgia,serif;font-size:2.5rem;font-weight:700;color:rgba(212,175,55,.15);line-height:1;margin-bottom:14px}
+.ps-ic{font-size:1.5rem;margin-bottom:12px;display:block}
+.ps-tt{font-size:1rem;font-weight:700;color:#fff;margin-bottom:8px}
+.ps-ds{font-family:-apple-system,Arial,sans-serif;font-size:13px;color:var(--t3);line-height:1.7}
+.ps-cn{position:absolute;right:-1px;top:50%;transform:translateY(-50%);width:20px;height:20px;background:var(--ink4);border:1px solid var(--gold-b);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--gold);z-index:1}
+@media(max-width:700px){.proc-steps{grid-template-columns:1fr}.ps{border-right:none;border-bottom:1px solid rgba(255,255,255,.04)}.ps-cn{display:none}}
+
+/* OUTPUT PREVIEW — reuses samp-sec / samp-db / sdb-hd / sdb-bd */
+.samp-sec{background:var(--ink3)}
+.samp-lbl{display:inline-block;padding:4px 14px;border-radius:20px;font-family:-apple-system,Arial,sans-serif;font-size:10px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--t3);background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.08);margin-bottom:2.5rem}
+.samp-db{background:var(--ink4);border:1px solid rgba(255,255,255,.07);border-radius:var(--rxl);overflow:hidden}
+.sdb-hd{padding:20px 28px;border-bottom:1px solid rgba(255,255,255,.05);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;background:rgba(13,21,32,.8)}
+.sdb-hd h3{font-size:1.1rem;font-weight:700;color:#fff;margin-bottom:2px}
+.rc{padding:5px 14px;border-radius:20px;font-family:-apple-system,Arial,sans-serif;font-size:11px;font-weight:700}
+.r-s{background:rgba(212,175,55,.12);color:var(--gold-l);border:1px solid var(--gold-b)}
+/* Shortlist table */
+.sl-tbl{width:100%;border-collapse:collapse}
+.sl-th{font-family:-apple-system,Arial,sans-serif;font-size:9px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--t4);padding:14px 22px;text-align:left;border-bottom:1px solid rgba(255,255,255,.05)}
+.sl-tr{border-bottom:1px solid rgba(255,255,255,.04);transition:background .15s}
+.sl-tr:last-child{border-bottom:none}
+.sl-tr:hover{background:rgba(255,255,255,.025)}
+.sl-td{padding:18px 22px;font-family:-apple-system,Arial,sans-serif;font-size:13.5px;vertical-align:middle}
+.rank-b{display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;border-radius:50%;font-family:Georgia,serif;font-weight:700;font-size:.95rem}
+.rank-1{background:rgba(212,175,55,.14);color:var(--gold);border:1px solid var(--gold-b)}
+.rank-2{background:rgba(255,255,255,.05);color:var(--t2);border:1px solid rgba(255,255,255,.08)}
+.rank-3{background:rgba(255,255,255,.03);color:var(--t3);border:1px solid rgba(255,255,255,.05)}
+.cand-nm{font-weight:700;color:#fff;font-family:Georgia,serif}
+.cand-rl{font-family:-apple-system,Arial,sans-serif;font-size:12px;color:var(--t4);margin-top:1px}
+.score-w{display:flex;align-items:center;gap:10px}
+.score-v{font-family:Georgia,serif;font-size:1.05rem;font-weight:700}
+.score-bar{flex:1;height:4px;background:rgba(255,255,255,.06);border-radius:2px;overflow:hidden;min-width:60px}
+.score-f{height:100%;border-radius:2px;transition:width 1.2s cubic-bezier(.4,0,.2,1)}
+.rec-p{padding:5px 12px;border-radius:20px;font-family:-apple-system,Arial,sans-serif;font-size:11px;font-weight:700;white-space:nowrap}
+.rec-hire{background:rgba(22,163,74,.12);color:#4ade80;border:1px solid rgba(22,163,74,.25)}
+.rec-cons{background:rgba(217,119,6,.12);color:#fbbf24;border:1px solid rgba(217,119,6,.25)}
+.rec-risk{background:rgba(220,38,38,.12);color:#f87171;border:1px solid rgba(220,38,38,.25)}
+@media(max-width:600px){.sl-th:nth-child(4),.sl-td:nth-child(4){display:none}}
+
+/* PRICING — reuses pri-sec / pri-c / pri-in style with multi-plan grid */
+.pri-sec{background:var(--ink2);border-top:1px solid rgba(212,175,55,.10);border-bottom:1px solid rgba(212,175,55,.10)}
+.pri-bar{height:3px;background:linear-gradient(90deg,var(--gold-d),var(--gold),var(--gold-l),var(--gold),var(--gold-d))}
+.pri-in{padding:clamp(2rem,5vw,3rem)}
+.pri-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;margin-top:2.5rem}
+.pri-c{background:var(--ink4);border:1px solid rgba(255,255,255,.07);border-radius:var(--rxl);overflow:hidden;position:relative;transition:border-color .2s,transform .15s}
+.pri-c:hover{border-color:var(--gold-b);transform:translateY(-2px)}
+.pri-c.feat{border:1.5px solid var(--gold)}
+.pri-in{padding:clamp(1.5rem,4vw,2rem)}
+.pa{display:flex;align-items:flex-start;gap:4px;margin-bottom:8px}
+.pa-d{font-size:1.3rem;font-weight:700;color:var(--gold);margin-top:6px;transition:opacity .25s,transform .25s}
+.pa-n{font-family:Georgia,serif;font-size:3.8rem;font-weight:700;color:var(--gold);line-height:1;transition:opacity .25s,transform .25s}
+.pd h3{font-size:1rem;font-weight:700;color:var(--t3);letter-spacing:.08em;text-transform:uppercase;font-family:-apple-system,Arial,sans-serif;font-size:10px;margin-bottom:6px}
+.pd p{font-family:-apple-system,Arial,sans-serif;font-size:13px;color:var(--t3);line-height:1.7;margin-bottom:16px}
+.pri-fs{display:flex;flex-direction:column;gap:8px;margin-bottom:22px}
+.pf{display:flex;align-items:flex-start;gap:8px;font-family:-apple-system,Arial,sans-serif;font-size:13px;color:var(--t2)}
+.pf::before{content:'✓';color:var(--gold);font-weight:700;font-size:12px;margin-top:1px;flex-shrink:0}
+.pri-btn{width:100%;padding:14px;background:var(--gold);color:var(--ink);font-family:-apple-system,Arial,sans-serif;font-weight:800;font-size:14px;border:none;border-radius:10px;cursor:pointer;transition:background .15s,box-shadow .15s;display:flex;align-items:center;justify-content:center;gap:8px;text-decoration:none}
+.pri-btn:hover{background:var(--gold-l);box-shadow:0 0 32px rgba(212,175,55,.25)}
+.pri-btn-o{width:100%;padding:13px;background:transparent;color:var(--gold);font-family:-apple-system,Arial,sans-serif;font-weight:700;font-size:14px;border:1px solid var(--gold-b);border-radius:10px;cursor:pointer;transition:border-color .15s;display:flex;align-items:center;justify-content:center;gap:8px;text-decoration:none}
+.pri-btn-o:hover{border-color:var(--gold)}
+.fb{position:absolute;top:16px;right:16px;font-family:-apple-system,Arial,sans-serif;font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink);background:var(--gold);padding:3px 10px;border-radius:12px}
+.pri-gua{display:flex;align-items:center;justify-content:center;gap:8px;margin-top:14px;font-family:-apple-system,Arial,sans-serif;font-size:11px;color:var(--t4)}
+.pri-gua::before{content:'🔒'}
+/* Currency toggle */
+.cur-tgl{display:inline-flex;align-items:center;gap:0;border:1px solid var(--gold-b);border-radius:8px;overflow:hidden;margin-bottom:2.5rem}
+.cur-b{padding:8px 24px;font-family:-apple-system,Arial,sans-serif;font-size:11px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;background:transparent;color:var(--t3);cursor:pointer;border:none;transition:background .15s,color .15s}
+.cur-b.on{background:var(--gold);color:var(--ink)}
+
+/* TRUST — reuses tr-sec / tr-grid / tr-c */
+.tr-sec{background:var(--ink3)}
+.tr-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:0;margin-top:3rem;border:1px solid rgba(255,255,255,.06);border-radius:var(--rl);overflow:hidden}
+.tr-c{padding:32px 28px;border-right:1px solid rgba(255,255,255,.06)}
+.tr-c:last-child{border-right:none}
+.tc-ic{font-size:1.75rem;margin-bottom:16px;display:block}
+.tc-tt{font-size:1.05rem;font-weight:700;color:#fff;margin-bottom:8px}
+.tc-ds{font-family:-apple-system,Arial,sans-serif;font-size:13.5px;color:var(--t3);line-height:1.75}
+@media(max-width:700px){.tr-grid{grid-template-columns:1fr}.tr-c{border-right:none;border-bottom:1px solid rgba(255,255,255,.06)}.tr-c:last-child{border-bottom:none}}
+
+/* FINAL CTA — matches cv-analysis bottom CTA area */
+.cta-band{background:var(--ink2);border-top:1px solid rgba(212,175,55,.10);padding:clamp(4rem,8vw,6rem) clamp(1.25rem,5vw,2rem);text-align:center}
+.cta-band .sec-h{margin-bottom:12px}
+.cta-band .sec-p{margin:0 auto 2.5rem;max-width:520px}
+.pri-gua2{display:flex;align-items:center;justify-content:center;gap:8px;margin-top:20px;font-family:-apple-system,Arial,sans-serif;font-size:11px;color:var(--t4)}
+.pri-gua2::before{content:'🔒'}
+
+/* PROB-SEC — reality section (from cv-analysis) */
+.prob-sec{background:var(--ink2);border-top:1px solid rgba(255,255,255,.04)}
+.prob-grid{display:grid;grid-template-columns:1fr 1fr;gap:3rem;align-items:center;margin-top:3rem}
+@media(max-width:700px){.prob-grid{grid-template-columns:1fr}}
+.prob-t h3{font-size:1.25rem;font-weight:700;margin-bottom:12px}
+.prob-t p{font-family:-apple-system,Arial,sans-serif;font-size:14.5px;color:var(--t2);line-height:1.85;margin-bottom:14px}
+.stat-co{background:var(--gold-dim);border:1px solid var(--gold-b);border-radius:var(--r);padding:18px 20px;margin-top:20px;display:flex;gap:14px;align-items:center}
+.sc-n{font-family:Georgia,serif;font-size:2.4rem;font-weight:700;color:var(--gold);flex-shrink:0;line-height:1}
+.sc-t{font-family:-apple-system,Arial,sans-serif;font-size:13px;color:var(--t2);line-height:1.65}
+/* FOOTER */
+footer{border-top:1px solid rgba(212,175,55,.10);padding:2rem clamp(1.25rem,5vw,3rem);text-align:center;font-family:-apple-system,Arial,sans-serif;font-size:12px;color:var(--t4)}
+footer a{color:var(--gold);text-decoration:none}
+</style>
+</head>
+<body>
+
+<!-- NAV — identical to cv-analysis.html -->
+<nav class="nav">
+  <a href="https://directlabourconsult.com" class="nav-logo">
+    <div class="nav-mark">DL</div>
+    <div>
+      <div class="nav-tm">Direct Labour Consult</div>
+      <div class="nav-ts">HR Advisory · Gaborone, Botswana</div>
+    </div>
+  </a>
+  <div class="nav-r">
+    <a href="https://directlabourconsult.com/#/services" class="nav-lk sans">Services</a>
+    <a href="/cv-analysis.html" class="nav-lk sans">CV Diagnostic</a>
+    <a href="#pricing" class="nav-ct">Get My Shortlist</a>
+  </div>
+</nav>
+
+<!-- HERO — same structure as cv-analysis.html -->
+<section class="hero">
+  <div class="hero-bg"></div>
+  <div class="hero-grid"></div>
+  <div class="hero-c">
+    <div class="h-ey sans">DLC Hiring Decision Report — Recruiter Console</div>
+    <h1 class="hero-h">
+      <span class="dim">Make your next hire</span><br>
+      <span class="gold">with confidence.</span>
+    </h1>
+    <p class="hero-sub sans">Upload candidate CVs and receive a structured Hiring Decision Report — with clear recommendations on who to hire, who to consider, and who to avoid.</p>
+    <p class="sans" style="font-size:13px;color:var(--t3);margin-top:-1.5rem;margin-bottom:2.5rem;font-style:italic">The same structured diagnostic used to evaluate your CV is used to evaluate your candidates — ensuring consistency in how talent is assessed.</p>
+    <div class="hero-acts">
+      <a href="/recruiter-upload.html" class="btn-g sans" target="_blank" rel="noopener">Get Hiring Report →</a>
+      <a href="#preview" class="btn-gh sans">See Sample Output</a>
+    </div>
+    <p class="sans" style="font-size:12px;color:var(--t4);font-style:italic;margin-top:-2rem;margin-bottom:1.5rem"></p>
+    <div class="h-stats">
+      <div class="h-stat"><div class="hs-n">25</div><div class="hs-l sans">CVs Per Batch</div></div>
+      <div class="h-stat"><div class="hs-n">100</div><div class="hs-l sans">Point Scale</div></div>
+      <div class="h-stat"><div class="hs-n">&lt;5min</div><div class="hs-l sans">Report Delivery</div></div>
+      <div class="h-stat"><div class="hs-n">$25</div><div class="hs-l sans">From</div></div>
+    </div>
+  </div>
+</section>
+
+<hr class="div"/>
+
+<!-- REALITY SECTION — reuses prob-sec pattern from cv-analysis -->
+<section class="sec prob-sec">
+  <div class="con">
+    <div class="ey">The problem most employers don't see</div>
+    <div class="prob-grid">
+      <div class="prob-t">
+        <h3>Most hiring mistakes don't happen in interviews.</h3>
+        <p class="sans">They happen before — at CV selection.</p>
+        <p class="sans">On paper, candidates look qualified. In reality, critical gaps are missed: unclear role positioning, no measurable impact, misalignment with the role, and behavioural risks that only surface after they've started.</p>
+        <p class="sans">By the time you discover the problem — the cost has already begun.</p>
+        <div class="stat-co"><div class="sc-n">67%</div><div class="sc-t sans">of poor hiring decisions are traced back to the CV screening stage — before a single interview takes place</div></div>
+      </div>
+      <div>
+        <div style="background:var(--ink4);border:1px solid rgba(255,255,255,.07);border-radius:var(--rl);padding:28px;">
+          <div style="font-family:-apple-system,Arial,sans-serif;font-size:10px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--t4);margin-bottom:18px">What gets missed at the CV stage</div>
+          <div style="display:flex;flex-direction:column;gap:14px">
+            <div style="display:flex;align-items:flex-start;gap:12px">
+              <div style="width:8px;height:8px;border-radius:50%;background:#f87171;flex-shrink:0;margin-top:5px"></div>
+              <div><div style="font-size:.95rem;font-weight:700;color:#fff;margin-bottom:3px">Unclear role positioning</div><div style="font-family:-apple-system,Arial,sans-serif;font-size:12.5px;color:var(--t3);line-height:1.6">The candidate's level and function are ambiguous.</div></div>
+            </div>
+            <div style="display:flex;align-items:flex-start;gap:12px">
+              <div style="width:8px;height:8px;border-radius:50%;background:#f87171;flex-shrink:0;margin-top:5px"></div>
+              <div><div style="font-size:.95rem;font-weight:700;color:#fff;margin-bottom:3px">No measurable impact</div><div style="font-family:-apple-system,Arial,sans-serif;font-size:12.5px;color:var(--t3);line-height:1.6">Responsibilities listed — results nowhere to be found.</div></div>
+            </div>
+            <div style="display:flex;align-items:flex-start;gap:12px">
+              <div style="width:8px;height:8px;border-radius:50%;background:#f87171;flex-shrink:0;margin-top:5px"></div>
+              <div><div style="font-size:.95rem;font-weight:700;color:#fff;margin-bottom:3px">Misalignment with the role</div><div style="font-family:-apple-system,Arial,sans-serif;font-size:12.5px;color:var(--t3);line-height:1.6">Experience that looks relevant but isn't what you need.</div></div>
+            </div>
+            <div style="display:flex;align-items:flex-start;gap:12px">
+              <div style="width:8px;height:8px;border-radius:50%;background:#f87171;flex-shrink:0;margin-top:5px"></div>
+              <div><div style="font-size:.95rem;font-weight:700;color:#fff;margin-bottom:3px">Behavioural risks that surface later</div><div style="font-family:-apple-system,Arial,sans-serif;font-size:12.5px;color:var(--t3);line-height:1.6">Patterns that signal future conflict, disengagement, or resistance — visible at CV level, missed at interview.</div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<hr class="div"/>
+
+<!-- WHAT WE ASSESS — reuses del-sec / del-grid / del-c -->
+<section class="sec del-sec">
+  <div class="con">
+    <div class="ey">What we evaluate</div>
+    <h2 class="sec-h">What we evaluate before<br>you make a decision</h2>
+    <p class="sec-p sans">Modelled on the occupational psychology framework used by senior hiring managers when screening candidates for competitive roles.</p>
+    <div class="del-grid">
+      <div class="del-c">
+        <div class="del-ic">🎯</div>
+        <div>
+          <div class="del-tt">Role Clarity &amp; Seniority</div>
+          <div class="del-ds sans">Can we clearly identify what this candidate does — and at what level? Vague positioning is one of the most common reasons a strong candidate is wrongly passed over or wrongly advanced.</div>
+        </div>
+      </div>
+      <div class="del-c">
+        <div class="del-ic">📈</div>
+        <div>
+          <div class="del-tt">Evidence of Impact</div>
+          <div class="del-ds sans">Are there measurable results, or just responsibilities? Candidates who demonstrate quantified outcomes are significantly more likely to perform in role than those who only list duties.</div>
+        </div>
+      </div>
+      <div class="del-c">
+        <div class="del-ic">🔗</div>
+        <div>
+          <div class="del-tt">Alignment to Role Requirements</div>
+          <div class="del-ds sans">Does this candidate actually match what you're hiring for? Experience that looks relevant on the surface often conceals critical gaps at the functional or seniority level.</div>
+        </div>
+      </div>
+      <div class="del-c">
+        <div class="del-ic">📅</div>
+        <div>
+          <div class="del-tt">Career Consistency</div>
+          <div class="del-ds sans">Are there gaps, contradictions, or unexplained transitions? Inconsistencies in career history are among the strongest early predictors of future retention risk.</div>
+        </div>
+      </div>
+      <div class="del-c">
+        <div class="del-ic">⚠️</div>
+        <div>
+          <div class="del-tt">Behavioural Risk Indicators</div>
+          <div class="del-ds sans">Patterns that may signal future workplace conflict, disengagement, or resistance — identified before the interview stage, not discovered after the hire.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<hr class="div"/>
+
+<!-- DIFFERENTIATOR — reuses prob-sec background, stat-co style -->
+<section class="sec" style="background:var(--ink3);border-top:1px solid rgba(255,255,255,.04)">
+  <div class="con-sm" style="text-align:center">
+    <div class="ey" style="justify-content:center">Our differentiator</div>
+    <h2 class="sec-h">We don't just assess qualifications.</h2>
+    <p class="sec-p sans" style="margin:0 auto 2rem;max-width:560px">We assess behavioural risk — before it costs your organisation. Because the wrong hire doesn't fail on paper. They fail in your culture, your team, and your operations.</p>
+    <div class="stat-co" style="max-width:580px;margin:0 auto">
+      <div class="sc-n" style="font-size:1.8rem">⚠️</div>
+      <div class="sc-t sans">The cost of a bad hire is estimated at 50–200% of annual salary — most of it invisible until it's too late to reverse the decision.</div>
+    </div>
+  </div>
+</section>
+
+<hr class="div"/>
+
+<!-- HOW IT WORKS — reuses proc-sec / proc-steps / ps -->
+<section class="sec proc-sec">
+  <div class="con">
+    <div class="ey">How it works</div>
+    <h2 class="sec-h">Four steps. A Hiring Decision Report in minutes.</h2>
+    <div class="proc-steps">
+      <div class="ps">
+        <div class="ps-n">01</div>
+        <span class="ps-ic">📁</span>
+        <div class="ps-tt">Upload candidate CVs</div>
+        <div class="ps-ds sans">Send your candidate CVs — PDF or Word. Up to 25 documents per batch, submitted securely by email to our team.</div>
+        <div class="ps-cn">→</div>
+      </div>
+      <div class="ps">
+        <div class="ps-n">02</div>
+        <span class="ps-ic">🧠</span>
+        <div class="ps-tt">Analysis runs</div>
+        <div class="ps-ds sans">Our system evaluates each profile using structured criteria — the same framework applied to your individual CV Diagnostic.</div>
+        <div class="ps-cn">→</div>
+      </div>
+      <div class="ps">
+        <div class="ps-n">03</div>
+        <span class="ps-ic">📊</span>
+        <div class="ps-tt">Candidates scored and compared</div>
+        <div class="ps-ds sans">Every candidate is scored out of 100, ranked from strongest to weakest, and flagged for any behavioural risk indicators identified during analysis.</div>
+        <div class="ps-cn">→</div>
+      </div>
+      <div class="ps">
+        <div class="ps-n">04</div>
+        <span class="ps-ic">📋</span>
+        <div class="ps-tt">You receive your Hiring Decision Report</div>
+        <div class="ps-ds sans">A clean, professional report ready for action. Share it with your hiring panel or leadership — decision-ready from the moment it arrives.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<hr class="div"/>
+
+<!-- OUTPUT PREVIEW — reuses samp-sec / samp-db -->
+<section class="sec samp-sec" id="preview">
+  <div class="con">
+    <div class="ey">What your report includes</div>
+    <h2 class="sec-h" style="margin-bottom:.5rem">What your report includes</h2>
+    <p class="sec-p sans" style="margin-bottom:2.5rem">Every score is generated from the actual candidate CV — not a template response. Clear recommendation provided for each candidate. This is not raw data. This is a decision-ready report.</p>
+    <div class="samp-lbl sans">Example · Illustrative candidates · HR Manager role</div>
+    <div class="samp-db">
+      <div class="sdb-hd">
+        <div>
+          <h3>Hiring Decision Report</h3>
+          <p class="sans" style="font-size:12px;color:var(--t3)">HR Manager · Gaborone · 3 candidates assessed</p>
+        </div>
+        <div class="rc r-s sans">Report Complete</div>
+      </div>
+      <div style="overflow-x:auto">
+        <table class="sl-tbl">
+          <thead>
+            <tr>
+              <th class="sl-th">Rank</th>
+              <th class="sl-th">Candidate</th>
+              <th class="sl-th">Score</th>
+              <th class="sl-th">Recommendation</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr class="sl-tr">
+              <td class="sl-td"><span class="rank-b rank-1">#1</span></td>
+              <td class="sl-td">
+                <div class="cand-nm">Candidate A</div>
+                <div class="cand-rl">Senior HR Manager · 9 yrs experience</div>
+              </td>
+              <td class="sl-td">
+                <div class="score-w">
+                  <span class="score-v" style="color:#22c55e">82</span>
+                  <div class="score-bar"><div class="score-f" style="width:82%;background:#22c55e"></div></div>
+                </div>
+              </td>
+              <td class="sl-td"><span class="rec-p rec-hire">● Strong Hire</span></td>
+            </tr>
+            <tr class="sl-tr">
+              <td class="sl-td"><span class="rank-b rank-2">#2</span></td>
+              <td class="sl-td">
+                <div class="cand-nm">Candidate B</div>
+                <div class="cand-rl">HR Generalist · 6 yrs experience</div>
+              </td>
+              <td class="sl-td">
+                <div class="score-w">
+                  <span class="score-v" style="color:#d4af37">74</span>
+                  <div class="score-bar"><div class="score-f" style="width:74%;background:#d4af37"></div></div>
+                </div>
+              </td>
+              <td class="sl-td"><span class="rec-p rec-cons">● Consider</span></td>
+            </tr>
+            <tr class="sl-tr">
+              <td class="sl-td"><span class="rank-b rank-3">#3</span></td>
+              <td class="sl-td">
+                <div class="cand-nm">Candidate C</div>
+                <div class="cand-rl">HR Officer · 3 yrs experience</div>
+              </td>
+              <td class="sl-td">
+                <div class="score-w">
+                  <span class="score-v" style="color:#f87171">61</span>
+                  <div class="score-bar"><div class="score-f" style="width:61%;background:#f87171"></div></div>
+                </div>
+              </td>
+              <td class="sl-td"><span class="rec-p rec-risk">● Risk</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div style="padding:20px 24px;background:var(--gold-dim);border-top:1px solid var(--gold-b)">
+        <div style="font-family:-apple-system,Arial,sans-serif;font-size:10px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--gold);margin-bottom:12px">You also receive</div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px">
+          <div style="font-family:-apple-system,Arial,sans-serif;font-size:13px;color:var(--t2);display:flex;gap:8px"><span style="color:var(--gold);font-weight:700">✓</span>Top strengths per candidate</div>
+          <div style="font-family:-apple-system,Arial,sans-serif;font-size:13px;color:var(--t2);display:flex;gap:8px"><span style="color:var(--gold);font-weight:700">✓</span>Critical gaps to be aware of</div>
+          <div style="font-family:-apple-system,Arial,sans-serif;font-size:13px;color:var(--t2);display:flex;gap:8px"><span style="color:var(--gold);font-weight:700">✓</span>Behavioural risk insights</div>
+          <div style="font-family:-apple-system,Arial,sans-serif;font-size:13px;color:var(--t2);display:flex;gap:8px"><span style="color:var(--gold);font-weight:700">✓</span>Clear hiring recommendation</div>
+          <div style="font-family:-apple-system,Arial,sans-serif;font-size:13px;color:var(--t2);display:flex;gap:8px"><span style="color:var(--gold);font-weight:700">✓</span>Professional advisory note</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<hr class="div"/>
+
+<!-- PRICING — reuses pri-sec pattern, extended to 3-plan grid -->
+<section class="sec pri-sec" id="pricing">
+  <div class="con">
+    <div class="ey">Pricing</div>
+    <h2 class="sec-h">Simple, transparent pricing</h2>
+    <p class="sec-p sans" style="margin-bottom:.5rem">Pay only for what you submit. No subscriptions. No setup fees.</p>
+    <p class="sans" style="font-size:13px;color:var(--t4);margin-bottom:2rem">Prices available in USD and BWP.</p>
+    <p class="sans" style="font-size:12px;color:var(--t3);font-style:italic;margin-top:-1rem;margin-bottom:2rem;padding:12px 16px;background:var(--gold-dim);border:1px solid var(--gold-b);border-radius:var(--r);display:inline-block">⚠️ This service is currently being finalised for full release. Early access clients will be prioritised.</p>
+
+    <!-- Currency toggle -->
+    <div class="cur-tgl" role="group">
+      <button class="cur-b on" id="b-usd" onclick="setCur('usd')" type="button">USD $</button>
+      <button class="cur-b" id="b-bwp" onclick="setCur('bwp')" type="button">BWP P</button>
+    </div>
+
+    <div class="pri-grid">
+      <!-- 5 CVs -->
+      <div class="pri-c">
+        <div class="pri-bar"></div>
+        <div class="pri-in">
+          <div class="pd"><h3>5 CV Package</h3></div>
+          <div class="pa">
+            <span class="pa-d" id="sym5">$</span>
+            <span class="pa-n" id="amt5">25</span>
+          </div>
+          <div class="pd"><p>Ideal for single-role hiring with a focused candidate pool.</p></div>
+          <div class="pri-fs">
+            <div class="pf sans">Receive a Hiring Decision Report for up to 5 candidates</div>
+            <div class="pf sans">Full Hiring Decision Report</div>
+            <div class="pf sans">Hiring recommendation per candidate</div>
+            <div class="pf sans">Behavioural risk flags included</div>
+          </div>
+          <a href="/recruiter-upload.html" class="pri-btn-o sans" target="_blank" rel="noopener">Get Hiring Report →</a>
+          <p class="sans" style="font-size:11px;color:var(--t4);font-style:italic;margin-top:10px;text-align:center">Currently in final testing — early access on request.</p>
+        </div>
+      </div>
+
+      <!-- 10 CVs — FEATURED -->
+      <div class="pri-c feat">
+        <div class="pri-bar"></div>
+        <span class="fb">Most Popular</span>
+        <div class="pri-in">
+          <div class="pd"><h3>10 CV Package</h3></div>
+          <div class="pa">
+            <span class="pa-d" id="sym10">$</span>
+            <span class="pa-n" id="amt10">45</span>
+          </div>
+          <div class="pd"><p>The standard choice for competitive roles with multiple strong applicants.</p></div>
+          <div class="pri-fs">
+            <div class="pf sans">Receive a Hiring Decision Report for up to 10 candidates</div>
+            <div class="pf sans">Full Hiring Decision Report</div>
+            <div class="pf sans">Behavioural risk flags included</div>
+            <div class="pf sans">Best candidate identification</div>
+            <div class="pf sans">Professional advisory note</div>
+          </div>
+          <a href="/recruiter-upload.html" class="pri-btn sans" target="_blank" rel="noopener">Get Hiring Report →</a>
+          <div class="pri-gua sans">No subscription · Early access · Priority processing</div>
+          <p class="sans" style="font-size:11px;color:var(--t4);font-style:italic;margin-top:8px;text-align:center">Currently in final testing — early access on request.</p>
+        </div>
+      </div>
+
+      <!-- 25 CVs -->
+      <div class="pri-c">
+        <div class="pri-bar"></div>
+        <div class="pri-in">
+          <div class="pd"><h3>25 CV Package</h3></div>
+          <div class="pa">
+            <span class="pa-d" id="sym25">$</span>
+            <span class="pa-n" id="amt25">75</span>
+          </div>
+          <div class="pd"><p>For volume hiring campaigns and multi-role recruitment drives.</p></div>
+          <div class="pri-fs">
+            <div class="pf sans">Receive a Hiring Decision Report for up to 25 candidates</div>
+            <div class="pf sans">Full Hiring Decision Report</div>
+            <div class="pf sans">Strength &amp; weakness per candidate</div>
+            <div class="pf sans">Full behavioural risk report</div>
+            <div class="pf sans">Priority processing</div>
+          </div>
+          <a href="/recruiter-upload.html" class="pri-btn-o sans" target="_blank" rel="noopener">Get Hiring Report →</a>
+          <p class="sans" style="font-size:11px;color:var(--t4);font-style:italic;margin-top:10px;text-align:center">Currently in final testing — early access on request.</p>
+        </div>
+      </div>
+    </div>
+
+    <p style="margin-top:1.5rem;font-family:-apple-system,Arial,sans-serif;font-size:12px;color:var(--t4);text-align:center">
+      Contact us to begin: <a href="mailto:dlc-hrservices@outlook.com" style="color:var(--gold)">dlc-hrservices@outlook.com</a> · 
+      <a href="tel:+26731190000" style="color:var(--gold)">+267 3119000</a> · 
+      <a href="tel:+26776720200" style="color:var(--gold)">+267 76720200</a>
+    </p>
+  </div>
+</section>
+
+<hr class="div"/>
+
+<!-- TRUST — reuses tr-sec / tr-grid / tr-c -->
+<section class="sec tr-sec">
+  <div class="con">
+    <div class="ey">Why it works</div>
+    <h2 class="sec-h">Built on real HR and Industrial<br>Psychology principles</h2>
+    <p class="sec-p sans">Designed for real hiring environments — not theory. Used in real hiring environments where accuracy and judgment matter.</p>
+    <div class="tr-grid">
+      <div class="tr-c">
+        <span class="tc-ic">🧠</span>
+        <div class="tc-tt">Real HR and Industrial Psychology Principles</div>
+        <div class="tc-ds sans">Our evaluation model is grounded in the same occupational psychology principles used in structured interviewing, competency-based assessment, and executive selection — applied at CV level.</div>
+        <div class="tc-me">Est. 2018</div>
+      </div>
+      <div class="tr-c">
+        <span class="tc-ic">🏢</span>
+        <div class="tc-tt">Designed for Real Hiring Environments</div>
+        <div class="tc-ds sans">Built specifically for Botswana and Southern African hiring contexts. We understand local market norms, qualification frameworks, and the specific risk factors that matter in your environment.</div>
+      </div>
+      <div class="tr-c">
+        <span class="tc-ic">⚖️</span>
+        <div class="tc-tt">We Strengthen Your Judgment — Not Replace It</div>
+        <div class="tc-ds sans">We don't replace your judgment. We strengthen it. Final decisions remain with your team — supported by structured, objective analysis that reduces guesswork and improves consistency.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<hr class="div"/>
+
+<!-- FINAL CTA — matches cv-analysis bottom section tone and structure -->
+<section class="cta-band">
+  <div class="con-sm">
+    <div class="ey" style="justify-content:center">Start today</div>
+    <h2 class="sec-h" style="text-align:center">Make your next hiring<br>decision with clarity.</h2>
+    <p class="sec-p sans" style="text-align:center;margin:0 auto 2.5rem">Stop guessing. Start selecting with confidence. Send us your candidate CVs and receive a structured Hiring Decision Report — within minutes, not days.</p>
+    <div style="display:flex;justify-content:center">
+      <a href="/recruiter-upload.html" class="btn-g sans" target="_blank" rel="noopener">Get Hiring Report →</a>
+    </div>
+    <p class="sans" style="font-size:12px;color:var(--t4);font-style:italic;margin-top:16px"></p>
+    <div class="pri-gua2 sans">No subscription required · Early access only · Priority onboarding</div>
+    <p style="margin-top:2rem;font-family:-apple-system,Arial,sans-serif;font-size:11px;color:var(--t4);text-align:center;line-height:1.75">
+      <a href="tel:+26731190000" style="color:var(--gold)">+267 3119000</a> · 
+      <a href="tel:+26776720200" style="color:var(--gold)">+267 76720200</a> · 
+      <a href="mailto:dlc-hrservices@outlook.com" style="color:var(--gold)">dlc-hrservices@outlook.com</a><br>
+      Plot 14433, Gaborone West Industrial, Gaborone, Botswana
+    </p>
+  </div>
+</section>
+
+<footer>
+  <p>© 2026 Direct Labour Consult &nbsp;·&nbsp; Workplace Intelligence. Practical Solutions. &nbsp;·&nbsp; 
+     <a href="https://directlabourconsult.com">Home</a> &nbsp;·&nbsp; 
+     <a href="/cv-analysis.html">CV Diagnostic</a> &nbsp;·&nbsp; 
+     <a href="mailto:dlc-hrservices@outlook.com">Contact</a>
+  </p>
+</footer>
+
+<!-- Currency toggle — same pattern as recruiter.html v1 -->
+<script>
+var prices = {
+  usd: { sym:'$', '5':'25', '10':'45', '25':'75' },
+  bwp: { sym:'P', '5':'350', '10':'650', '25':'1,500' }
+};
+function setCur(cur) {
+  var p = prices[cur];
+  ['5','10','25'].forEach(function(k) {
+    document.getElementById('sym'+k).textContent = p.sym;
+    var el = document.getElementById('amt'+k);
+    el.style.opacity = '0'; el.style.transform = 'translateY(-5px)';
+    setTimeout(function(){
+      el.textContent = p[k];
+      el.style.transition = 'opacity .2s,transform .2s';
+      el.style.opacity = '1'; el.style.transform = 'none';
+    }, 150);
+  });
+  document.getElementById('b-usd').classList.toggle('on', cur==='usd');
+  document.getElementById('b-bwp').classList.toggle('on', cur==='bwp');
+}
+</script>
+</body>
+</html>
