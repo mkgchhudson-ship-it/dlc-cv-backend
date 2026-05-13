@@ -16,6 +16,16 @@ except ImportError:
     HAS_PDF = False
 
 try:
+    import pypdf
+    HAS_PYPDF = True
+except ImportError:
+    try:
+        import PyPDF2 as pypdf
+        HAS_PYPDF = True
+    except ImportError:
+        HAS_PYPDF = False
+
+try:
     from docx import Document as DocxDocument
     HAS_DOCX = True
 except ImportError:
@@ -34,30 +44,79 @@ client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
 # ─────────────────────────────────────────────
 
 def extract_text(file_storage):
-    """Extract plain text from PDF or DOCX file storage object."""
+    """Extract plain text from PDF or DOCX with multiple fallback methods."""
     filename = (file_storage.filename or "").lower()
-    with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(filename)[1]) as tmp:
+    ext = os.path.splitext(filename)[1] or ".pdf"
+    with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
         file_storage.save(tmp.name)
         tmp_path = tmp.name
 
     text = ""
     try:
-        if filename.endswith(".pdf") and HAS_PDF:
-            with pdfplumber.open(tmp_path) as pdf:
-                text = "\n".join(page.extract_text() or "" for page in pdf.pages)
+        if filename.endswith(".pdf"):
+            # Method 1: pdfplumber (best for text PDFs)
+            if HAS_PDF:
+                try:
+                    with pdfplumber.open(tmp_path) as pdf:
+                        pages_text = []
+                        for page in pdf.pages:
+                            t = page.extract_text()
+                            if t:
+                                pages_text.append(t)
+                        text = "\n".join(pages_text)
+                except Exception as e:
+                    logger.warning(f"pdfplumber failed: {e}")
+
+            # Method 2: pypdf fallback
+            if (not text or len(text) < 100) and HAS_PYPDF:
+                try:
+                    reader = pypdf.PdfReader(tmp_path)
+                    pages_text = []
+                    for page in reader.pages:
+                        t = page.extract_text()
+                        if t:
+                            pages_text.append(t)
+                    text = "\n".join(pages_text)
+                except Exception as e:
+                    logger.warning(f"pypdf failed: {e}")
+
+            # Method 3: raw byte extraction (last resort for any PDF)
+            if not text or len(text) < 100:
+                try:
+                    with open(tmp_path, "rb") as f:
+                        raw = f.read()
+                    # Extract readable ASCII strings from binary
+                    import re as _re
+                    strings = _re.findall(b'[\\x20-\\x7E]{4,}', raw)
+                    text = " ".join(s.decode("ascii", errors="ignore") for s in strings)
+                except Exception as e:
+                    logger.warning(f"Raw extraction failed: {e}")
+
         elif filename.endswith((".docx", ".doc")) and HAS_DOCX:
-            doc = DocxDocument(tmp_path)
-            text = "\n".join(p.text for p in doc.paragraphs)
+            try:
+                doc = DocxDocument(tmp_path)
+                paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
+                # Also extract from tables
+                for table in doc.tables:
+                    for row in table.rows:
+                        for cell in row.cells:
+                            if cell.text.strip():
+                                paragraphs.append(cell.text)
+                text = "\n".join(paragraphs)
+            except Exception as e:
+                logger.warning(f"docx extraction failed: {e}")
+
         else:
-            # Fallback: read as bytes and decode loosely
             with open(tmp_path, "rb") as f:
                 raw = f.read()
             text = raw.decode("utf-8", errors="ignore")
+
     finally:
         try:
             os.unlink(tmp_path)
         except Exception:
             pass
+
     return text.strip()
 
 
