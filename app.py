@@ -92,11 +92,10 @@ def extract_text(file_storage):
                 except Exception as e:
                     logger.warning(f"Raw extraction failed: {e}")
 
-        elif filename.endswith((".docx", ".doc")) and HAS_DOCX:
+        elif filename.endswith(".docx") and HAS_DOCX:
             try:
                 doc = DocxDocument(tmp_path)
                 paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
-                # Also extract from tables
                 for table in doc.tables:
                     for row in table.rows:
                         for cell in row.cells:
@@ -105,6 +104,54 @@ def extract_text(file_storage):
                 text = "\n".join(paragraphs)
             except Exception as e:
                 logger.warning(f"docx extraction failed: {e}")
+
+        elif filename.endswith(".doc"):
+            # Old .doc format — try multiple methods
+            # Method 1: antiword (if available on system)
+            try:
+                import subprocess
+                result = subprocess.run(
+                    ["antiword", tmp_path],
+                    capture_output=True, text=True, timeout=30
+                )
+                if result.returncode == 0 and result.stdout.strip():
+                    text = result.stdout
+            except Exception:
+                pass
+
+            # Method 2: Try opening as docx anyway (some .doc are actually docx)
+            if not text or len(text) < 80:
+                try:
+                    if HAS_DOCX:
+                        doc = DocxDocument(tmp_path)
+                        paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
+                        text = "\n".join(paragraphs)
+                except Exception:
+                    pass
+
+            # Method 3: Raw binary string extraction from .doc
+            if not text or len(text) < 80:
+                try:
+                    with open(tmp_path, "rb") as f:
+                        raw = f.read()
+                    # .doc files store text in UTF-16 or latin-1 encoded blocks
+                    # Try UTF-16 first
+                    try:
+                        decoded = raw.decode("utf-16-le", errors="ignore")
+                        # Filter to printable characters
+                        clean = re.sub(r'[^\x20-\x7E\n\r\t]', ' ', decoded)
+                        words = [w for w in clean.split() if len(w) > 1]
+                        text = " ".join(words)
+                    except Exception:
+                        pass
+                    # Fallback to latin-1
+                    if not text or len(text) < 80:
+                        decoded = raw.decode("latin-1", errors="ignore")
+                        clean = re.sub(r'[^\x20-\x7E\n\r\t]', ' ', decoded)
+                        words = [w for w in clean.split() if len(w) > 1]
+                        text = " ".join(words)
+                except Exception as e:
+                    logger.warning(f".doc raw extraction failed: {e}")
 
         else:
             with open(tmp_path, "rb") as f:
