@@ -201,7 +201,7 @@ JSON structure:
 def analyse_single(cv_text, job_title=""):
     prompt = f"JOB TITLE (if provided): {job_title}\n\nCV TEXT:\n{cv_text[:12000]}"
     message = client.messages.create(
-        model="claude-sonnet-4-20250514",
+        model="claude-sonnet-4-5",
         max_tokens=2000,
         system=SINGLE_SYSTEM,
         messages=[{"role": "user", "content": prompt}]
@@ -244,7 +244,7 @@ def analyse_candidate(cv_text, job_title, index):
     prompt = f"ROLE BEING RECRUITED FOR: {job_title or 'Not specified'}\n\nCANDIDATE CV:\n{cv_text[:10000]}"
     try:
         message = client.messages.create(
-            model="claude-sonnet-4-20250514",
+            model="claude-sonnet-4-5",
             max_tokens=1500,
             system=BATCH_SYSTEM,
             messages=[{"role": "user", "content": prompt}]
