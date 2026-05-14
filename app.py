@@ -3,17 +3,17 @@ import json
 import logging
 import tempfile
 import re
+import gc
 from datetime import datetime
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import anthropic
 
-# PDF / DOCX extraction
 try:
     import pdfplumber
-    HAS_PDF = True
+    HAS_PDFPLUMBER = True
 except ImportError:
-    HAS_PDF = False
+    HAS_PDFPLUMBER = False
 
 try:
     import pypdf
@@ -35,64 +35,55 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
+app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024  # 50MB
 CORS(app, origins=["*"])
 
 client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
 
-# ─────────────────────────────────────────────
-# TEXT EXTRACTION
-# ─────────────────────────────────────────────
+MAX_TEXT_CHARS = 15000
+MAX_PAGES = 30
 
-def extract_text(file_storage):
-    """Extract plain text from PDF or DOCX with multiple fallback methods."""
-    filename = (file_storage.filename or "").lower()
-    ext = os.path.splitext(filename)[1] or ".pdf"
-    with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
-        file_storage.save(tmp.name)
-        tmp_path = tmp.name
-
+def extract_text_from_path(tmp_path, filename):
     text = ""
-    try:
-        if filename.endswith(".pdf"):
-            # Method 1: pdfplumber (best for text PDFs)
-            if HAS_PDF:
-                try:
-                    with pdfplumber.open(tmp_path) as pdf:
-                        pages_text = []
-                        for page in pdf.pages:
-                            t = page.extract_text()
-                            if t:
-                                pages_text.append(t)
-                        text = "\n".join(pages_text)
-                except Exception as e:
-                    logger.warning(f"pdfplumber failed: {e}")
+    fname = filename.lower()
 
-            # Method 2: pypdf fallback
-            if (not text or len(text) < 100) and HAS_PYPDF:
-                try:
-                    reader = pypdf.PdfReader(tmp_path)
-                    pages_text = []
-                    for page in reader.pages:
+    if fname.endswith(".pdf"):
+        if HAS_PDFPLUMBER:
+            try:
+                with pdfplumber.open(tmp_path) as pdf:
+                    chunks = []
+                    for page in pdf.pages[:MAX_PAGES]:
                         t = page.extract_text()
                         if t:
-                            pages_text.append(t)
-                    text = "\n".join(pages_text)
+                            chunks.append(t)
+                    text = "\n".join(chunks)
+            except Exception as e:
+                logger.warning(f"pdfplumber failed: {e}")
+
+        if not text or len(text) < 100:
+            if HAS_PYPDF:
+                try:
+                    reader = pypdf.PdfReader(tmp_path)
+                    chunks = []
+                    for page in reader.pages[:MAX_PAGES]:
+                        t = page.extract_text()
+                        if t:
+                            chunks.append(t)
+                    text = "\n".join(chunks)
                 except Exception as e:
                     logger.warning(f"pypdf failed: {e}")
 
-            # Method 3: raw byte extraction (last resort for any PDF)
-            if not text or len(text) < 100:
-                try:
-                    with open(tmp_path, "rb") as f:
-                        raw = f.read()
-                    # Extract readable ASCII strings from binary
-                    import re as _re
-                    strings = _re.findall(b'[\\x20-\\x7E]{4,}', raw)
-                    text = " ".join(s.decode("ascii", errors="ignore") for s in strings)
-                except Exception as e:
-                    logger.warning(f"Raw extraction failed: {e}")
+        if not text or len(text) < 100:
+            try:
+                with open(tmp_path, "rb") as f:
+                    raw = f.read(5 * 1024 * 1024)
+                strings = re.findall(b'[\\x20-\\x7E]{5,}', raw)
+                text = " ".join(s.decode("ascii", errors="ignore") for s in strings)
+            except Exception as e:
+                logger.warning(f"PDF raw extraction failed: {e}")
 
-        elif filename.endswith(".docx") and HAS_DOCX:
+    elif fname.endswith(".docx"):
+        if HAS_DOCX:
             try:
                 doc = DocxDocument(tmp_path)
                 paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
@@ -105,75 +96,67 @@ def extract_text(file_storage):
             except Exception as e:
                 logger.warning(f"docx extraction failed: {e}")
 
-        elif filename.endswith(".doc"):
-            # Old .doc format — try multiple methods
-            # Method 1: antiword (if available on system)
+    elif fname.endswith(".doc"):
+        try:
+            import subprocess
+            result = subprocess.run(["antiword", tmp_path], capture_output=True, text=True, timeout=30)
+            if result.returncode == 0 and result.stdout.strip():
+                text = result.stdout
+        except Exception:
+            pass
+
+        if not text or len(text) < 80:
             try:
-                import subprocess
-                result = subprocess.run(
-                    ["antiword", tmp_path],
-                    capture_output=True, text=True, timeout=30
-                )
-                if result.returncode == 0 and result.stdout.strip():
-                    text = result.stdout
+                if HAS_DOCX:
+                    doc = DocxDocument(tmp_path)
+                    text = "\n".join(p.text for p in doc.paragraphs if p.text.strip())
             except Exception:
                 pass
 
-            # Method 2: Try opening as docx anyway (some .doc are actually docx)
-            if not text or len(text) < 80:
-                try:
-                    if HAS_DOCX:
-                        doc = DocxDocument(tmp_path)
-                        paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
-                        text = "\n".join(paragraphs)
-                except Exception:
-                    pass
-
-            # Method 3: Raw binary string extraction from .doc
-            if not text or len(text) < 80:
-                try:
-                    with open(tmp_path, "rb") as f:
-                        raw = f.read()
-                    # .doc files store text in UTF-16 or latin-1 encoded blocks
-                    # Try UTF-16 first
+        if not text or len(text) < 80:
+            try:
+                with open(tmp_path, "rb") as f:
+                    raw = f.read(3 * 1024 * 1024)
+                for encoding in ("utf-16-le", "latin-1"):
                     try:
-                        decoded = raw.decode("utf-16-le", errors="ignore")
-                        # Filter to printable characters
+                        decoded = raw.decode(encoding, errors="ignore")
                         clean = re.sub(r'[^\x20-\x7E\n\r\t]', ' ', decoded)
                         words = [w for w in clean.split() if len(w) > 1]
-                        text = " ".join(words)
+                        candidate = " ".join(words)
+                        if len(candidate) > len(text):
+                            text = candidate
                     except Exception:
                         pass
-                    # Fallback to latin-1
-                    if not text or len(text) < 80:
-                        decoded = raw.decode("latin-1", errors="ignore")
-                        clean = re.sub(r'[^\x20-\x7E\n\r\t]', ' ', decoded)
-                        words = [w for w in clean.split() if len(w) > 1]
-                        text = " ".join(words)
-                except Exception as e:
-                    logger.warning(f".doc raw extraction failed: {e}")
-
-        else:
+            except Exception as e:
+                logger.warning(f".doc raw extraction failed: {e}")
+    else:
+        try:
             with open(tmp_path, "rb") as f:
-                raw = f.read()
+                raw = f.read(2 * 1024 * 1024)
             text = raw.decode("utf-8", errors="ignore")
+        except Exception:
+            pass
 
+    return text.strip()[:MAX_TEXT_CHARS]
+
+
+def extract_text(file_storage):
+    filename = file_storage.filename or "upload.pdf"
+    ext = os.path.splitext(filename.lower())[1] or ".pdf"
+    with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
+        file_storage.save(tmp.name)
+        tmp_path = tmp.name
+    try:
+        return extract_text_from_path(tmp_path, filename)
     finally:
         try:
             os.unlink(tmp_path)
         except Exception:
             pass
 
-    return text.strip()
-
-
-# ─────────────────────────────────────────────
-# SINGLE CV ANALYSIS  (/analyze)
-# ─────────────────────────────────────────────
 
 SINGLE_SYSTEM = """You are a senior HR consultant and career strategist at Direct Labour Consult.
 Analyse the provided CV and return ONLY a valid JSON object — no markdown, no preamble.
-
 JSON structure:
 {
   "overall_score": <integer 0-100>,
@@ -197,40 +180,19 @@ JSON structure:
   }
 }"""
 
-
-def analyse_single(cv_text, job_title=""):
-    prompt = f"JOB TITLE (if provided): {job_title}\n\nCV TEXT:\n{cv_text[:12000]}"
-    message = client.messages.create(
-        model="claude-sonnet-4-5",
-        max_tokens=2000,
-        system=SINGLE_SYSTEM,
-        messages=[{"role": "user", "content": prompt}]
-    )
-    raw = message.content[0].text.strip()
-    # Strip markdown fences if present
-    raw = re.sub(r"^```(?:json)?\s*", "", raw)
-    raw = re.sub(r"\s*```$", "", raw)
-    return json.loads(raw)
-
-
-# ─────────────────────────────────────────────
-# BATCH ANALYSIS  (/analyze-batch)
-# ─────────────────────────────────────────────
-
 BATCH_SYSTEM = """You are a senior HR consultant at Direct Labour Consult performing candidate shortlisting.
 Analyse the provided CV and return ONLY a valid JSON object — no markdown, no preamble.
-
 JSON structure:
 {
   "candidate_name":    "<full name from CV or 'Candidate X'>",
   "overall_score":     <integer 0-100>,
   "market_readiness":  "<Excellent|Strong|Developing|Needs Improvement>",
   "recommendation":    "<Hire|Consider|Do Not Hire>",
-  "executive_summary": "<2-3 sentence summary of this candidate>",
+  "executive_summary": "<2-3 sentence summary>",
   "key_strengths":     ["<strength 1>", "<strength 2>", "<strength 3>"],
   "key_concerns":      ["<concern 1>", "<concern 2>"],
   "behavioural_risk":  "<Low|Medium|High>",
-  "behavioural_notes": "<1-2 sentences on any behavioural/cultural fit risk signals>",
+  "behavioural_notes": "<1-2 sentences on behavioural/cultural fit signals>",
   "sections": {
     "first_impression":   {"score": <0-100>, "feedback": "<text>"},
     "evidence_of_impact": {"score": <0-100>, "feedback": "<text>"},
@@ -240,146 +202,129 @@ JSON structure:
 }"""
 
 
-def analyse_candidate(cv_text, job_title, index):
-    prompt = f"ROLE BEING RECRUITED FOR: {job_title or 'Not specified'}\n\nCANDIDATE CV:\n{cv_text[:10000]}"
-    try:
-        message = client.messages.create(
-            model="claude-sonnet-4-5",
-            max_tokens=1500,
-            system=BATCH_SYSTEM,
-            messages=[{"role": "user", "content": prompt}]
-        )
-        raw = message.content[0].text.strip()
-        raw = re.sub(r"^```(?:json)?\s*", "", raw)
-        raw = re.sub(r"\s*```$", "", raw)
-        result = json.loads(raw)
-        result["_file_index"] = index
-        return result
-    except Exception as e:
-        logger.error(f"Candidate {index} analysis failed: {e}")
-        return {
-            "candidate_name": f"Candidate {index + 1}",
-            "overall_score": 0,
-            "market_readiness": "Needs Improvement",
-            "recommendation": "Do Not Hire",
-            "executive_summary": "Analysis failed for this candidate.",
-            "key_strengths": [],
-            "key_concerns": ["Could not process this CV file."],
-            "behavioural_risk": "Unknown",
-            "behavioural_notes": "Unable to assess.",
-            "sections": {},
-            "_file_index": index,
-            "_error": str(e)
-        }
+def parse_json_response(raw):
+    raw = raw.strip()
+    raw = re.sub(r'^```(?:json)?\s*', '', raw)
+    raw = re.sub(r'\s*```$', '', raw)
+    return json.loads(raw)
 
 
-# ─────────────────────────────────────────────
-# ROUTES
-# ─────────────────────────────────────────────
+def call_claude(system, prompt, max_tokens=2000):
+    message = client.messages.create(
+        model="claude-sonnet-4-5",
+        max_tokens=max_tokens,
+        system=system,
+        messages=[{"role": "user", "content": prompt}]
+    )
+    return message.content[0].text
+
 
 @app.route("/health", methods=["GET"])
 def health():
     return jsonify({
         "service": "DLC CV Analyser",
         "status": "ok",
+        "version": "v5",
         "timestamp": datetime.utcnow().isoformat() + "+00:00"
     })
 
 
 @app.route("/analyze", methods=["POST"])
 def analyze():
-    """Single CV analysis — existing endpoint, unchanged behaviour."""
     try:
         if "cv" not in request.files:
             return jsonify({"success": False, "error": "No CV file provided"}), 400
-
         cv_file = request.files["cv"]
         job_title = request.form.get("job_title", "")
-
         cv_text = extract_text(cv_file)
-        if not cv_text or len(cv_text) < 100:
-            return jsonify({"success": False, "error": "Could not extract text from CV. Please ensure it is a readable PDF or Word document."}), 400
-
-        result = analyse_single(cv_text, job_title)
+        logger.info(f"Single CV: {len(cv_text)} chars")
+        if not cv_text or len(cv_text) < 80:
+            return jsonify({"success": False, "error": "Could not extract text. Please use a readable PDF or Word document."}), 400
+        raw = call_claude(SINGLE_SYSTEM, f"JOB TITLE: {job_title}\n\nCV TEXT:\n{cv_text}", max_tokens=2000)
+        result = parse_json_response(raw)
+        gc.collect()
         return jsonify({"success": True, "data": result})
-
-    except json.JSONDecodeError as e:
-        logger.error(f"JSON parse error: {e}")
-        return jsonify({"success": False, "error": "AI returned an unexpected format. Please try again."}), 500
     except Exception as e:
         logger.error(f"Analyze error: {e}")
-        return jsonify({"success": False, "error": "Analysis service error. Please try again."}), 500
+        return jsonify({"success": False, "error": str(e)}), 500
 
 
 @app.route("/analyze-batch", methods=["POST"])
 def analyze_batch():
-    """
-    Batch CV analysis for recruiter flow.
-    Accepts: multiple CV files (field name 'cvs[]') + optional 'job_title'
-    Returns: ranked list of candidates with scores, recommendations, behavioural risk.
-    """
     try:
         files = request.files.getlist("cvs[]")
-        if not files or len(files) == 0:
+        if not files:
             return jsonify({"success": False, "error": "No CV files provided"}), 400
         if len(files) > 25:
             return jsonify({"success": False, "error": "Maximum 25 CVs per batch"}), 400
 
         job_title = request.form.get("job_title", "")
-        logger.info(f"Batch analysis: {len(files)} CVs, role: '{job_title}'")
+        logger.info(f"Batch: {len(files)} CVs, role: '{job_title}'")
 
-        results = []
+        # Extract all text first
+        candidates = []
         for i, cv_file in enumerate(files):
+            fname = cv_file.filename or f"cv_{i+1}.pdf"
             try:
-                cv_text = extract_text(cv_file)
-                if not cv_text or len(cv_text) < 80:
-                    result = {
-                        "candidate_name": cv_file.filename or f"Candidate {i+1}",
-                        "overall_score": 0,
-                        "market_readiness": "Needs Improvement",
-                        "recommendation": "Do Not Hire",
-                        "executive_summary": "Could not extract text from this file.",
-                        "key_strengths": [],
-                        "key_concerns": ["File could not be read — may be scanned/image PDF"],
-                        "behavioural_risk": "Unknown",
-                        "behavioural_notes": "Unable to assess.",
-                        "sections": {},
-                        "_file_index": i,
-                        "_filename": cv_file.filename
-                    }
-                else:
-                    result = analyse_candidate(cv_text, job_title, i)
-                    result["_filename"] = cv_file.filename
+                text = extract_text(cv_file)
+                logger.info(f"  [{i+1}] {fname}: {len(text)} chars")
+                candidates.append((i, text, fname))
             except Exception as e:
-                logger.error(f"File {i} ({cv_file.filename}) failed: {e}")
-                result = {
-                    "candidate_name": cv_file.filename or f"Candidate {i+1}",
+                logger.error(f"  [{i+1}] {fname}: {e}")
+                candidates.append((i, "", fname))
+
+        # Analyse each
+        results = []
+        for i, text, fname in candidates:
+            clean_name = re.sub(r'\.(pdf|docx?|txt)$', '', fname, flags=re.IGNORECASE)
+            if not text or len(text) < 80:
+                results.append({
+                    "candidate_name": clean_name,
                     "overall_score": 0,
                     "market_readiness": "Needs Improvement",
                     "recommendation": "Do Not Hire",
-                    "executive_summary": "Processing error for this candidate.",
+                    "executive_summary": "Could not extract text from this file.",
                     "key_strengths": [],
-                    "key_concerns": ["Processing error"],
+                    "key_concerns": ["File could not be read — may be scanned/image PDF or corrupted"],
                     "behavioural_risk": "Unknown",
                     "behavioural_notes": "Unable to assess.",
                     "sections": {},
                     "_file_index": i,
-                    "_filename": cv_file.filename,
-                    "_error": str(e)
-                }
-            results.append(result)
+                    "_filename": fname
+                })
+            else:
+                prompt = f"ROLE: {job_title or 'Not specified'}\n\nCV:\n{text}"
+                try:
+                    raw = call_claude(BATCH_SYSTEM, prompt, max_tokens=1500)
+                    result = parse_json_response(raw)
+                    result["_file_index"] = i
+                    result["_filename"] = fname
+                    results.append(result)
+                except Exception as e:
+                    logger.error(f"Claude failed for {fname}: {e}")
+                    results.append({
+                        "candidate_name": clean_name,
+                        "overall_score": 0,
+                        "market_readiness": "Needs Improvement",
+                        "recommendation": "Do Not Hire",
+                        "executive_summary": "Analysis failed for this candidate.",
+                        "key_strengths": [],
+                        "key_concerns": [f"AI analysis error: {str(e)[:80]}"],
+                        "behavioural_risk": "Unknown",
+                        "behavioural_notes": "Unable to assess.",
+                        "sections": {},
+                        "_file_index": i,
+                        "_filename": fname
+                    })
+            gc.collect()
 
-        # Sort by score descending
         results.sort(key=lambda x: x.get("overall_score", 0), reverse=True)
-
-        # Add rank
         for rank, r in enumerate(results, 1):
             r["rank"] = rank
 
-        # Summary stats
+        scored = [r.get("overall_score", 0) for r in results if r.get("overall_score", 0) > 0]
         hire_count = sum(1 for r in results if r.get("recommendation") == "Hire")
         consider_count = sum(1 for r in results if r.get("recommendation") == "Consider")
-        avg_score = round(sum(r.get("overall_score", 0) for r in results) / len(results)) if results else 0
 
         return jsonify({
             "success": True,
@@ -389,15 +334,20 @@ def analyze_batch():
                 "hire": hire_count,
                 "consider": consider_count,
                 "do_not_hire": len(results) - hire_count - consider_count,
-                "average_score": avg_score,
+                "average_score": round(sum(scored)/len(scored)) if scored else 0,
                 "top_candidate": results[0].get("candidate_name") if results else None
             },
             "ranked_candidates": results
         })
 
     except Exception as e:
-        logger.error(f"Batch analyze error: {e}")
-        return jsonify({"success": False, "error": f"Batch analysis failed: {str(e)}"}), 500
+        logger.error(f"Batch error: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.errorhandler(413)
+def too_large(e):
+    return jsonify({"success": False, "error": "File too large. Maximum 50MB per file."}), 413
 
 
 if __name__ == "__main__":
