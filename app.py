@@ -180,26 +180,35 @@ JSON structure:
   }
 }"""
 
-BATCH_SYSTEM = """You are a senior HR consultant at Direct Labour Consult performing candidate shortlisting.
-Analyse the provided CV and return ONLY a valid JSON object — no markdown, no preamble.
+BATCH_SYSTEM = """You are a senior HR consultant at Direct Labour Consult performing evidence-based candidate shortlisting.
+You will receive a full job specification AND a candidate CV. Score the candidate STRICTLY against the job requirements.
+Return ONLY a valid JSON object — no markdown, no preamble.
+
 JSON structure:
 {
-  "candidate_name":    "<full name from CV or 'Candidate X'>",
-  "overall_score":     <integer 0-100>,
+  "candidate_name":    "<full name from CV or Candidate X>",
+  "overall_score":     <integer 0-100 reflecting match to THIS specific job>,
   "market_readiness":  "<Excellent|Strong|Developing|Needs Improvement>",
   "recommendation":    "<Hire|Consider|Do Not Hire>",
-  "executive_summary": "<2-3 sentence summary>",
-  "key_strengths":     ["<strength 1>", "<strength 2>", "<strength 3>"],
-  "key_concerns":      ["<concern 1>", "<concern 2>"],
+  "executive_summary": "<2-3 sentence summary focused on fit for this specific role>",
+  "job_fit_note":      "<1 sentence: how well this candidate matches the job advert>",
+  "key_strengths":     ["<job-relevant strength 1>", "<strength 2>", "<strength 3>"],
+  "key_concerns":      ["<concern vs job requirements 1>", "<concern 2>"],
+  "skills_matched":    ["<required skill found in CV>"],
+  "skills_missing":    ["<required skill NOT in CV>"],
+  "experience_match":  "<Exceeds|Meets|Below|Unknown> requirements",
+  "education_match":   "<Exceeds|Meets|Below|Unknown> requirements",
   "behavioural_risk":  "<Low|Medium|High>",
-  "behavioural_notes": "<1-2 sentences on behavioural/cultural fit signals>",
+  "behavioural_notes": "<1-2 sentences on behavioural fit signals>",
   "sections": {
     "first_impression":   {"score": <0-100>, "feedback": "<text>"},
     "evidence_of_impact": {"score": <0-100>, "feedback": "<text>"},
-    "role_alignment":     {"score": <0-100>, "feedback": "<text>"},
+    "role_alignment":     {"score": <0-100>, "feedback": "<text based on job spec>"},
     "ats_compatibility":  {"score": <0-100>, "feedback": "<text>"}
   }
-}"""
+}
+
+RULES: Score against the SPECIFIC job. If disqualifying criteria match, set recommendation to Do Not Hire and score below 30. Be honest — recruiters need accuracy."""
 
 
 def parse_json_response(raw):
@@ -293,7 +302,25 @@ def analyze_batch():
                     "_filename": fname
                 })
             else:
-                prompt = f"ROLE: {job_title or 'Not specified'}\n\nCV:\n{text}"
+                # Build rich job context prompt
+                job_context = f"""JOB TITLE: {job_title or 'Not specified'}
+DEPARTMENT: {request.form.get('job_dept', 'Not specified')}
+MINIMUM EXPERIENCE: {request.form.get('job_exp', 'Any')} years
+EDUCATION REQUIRED: {request.form.get('job_edu', 'Any')}
+EMPLOYMENT TYPE: {request.form.get('job_type', 'Full-time')}
+REQUIRED SKILLS: {request.form.get('job_skills', 'Not specified')}
+DISQUALIFYING CRITERIA: {request.form.get('job_disq', 'None specified')}
+
+JOB ADVERT / DESCRIPTION:
+{request.form.get('job_desc', 'No detailed description provided.')}
+
+SCORING WEIGHTS (1-10, higher = more important):
+{request.form.get('weights', '{}')}
+"""
+                prompt = f"""{job_context}
+
+CANDIDATE CV:
+{text}"""
                 try:
                     raw = call_claude(BATCH_SYSTEM, prompt, max_tokens=1500)
                     result = parse_json_response(raw)
