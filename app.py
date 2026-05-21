@@ -146,10 +146,75 @@ def call_claude(system_prompt: str, user_content: str) -> dict | list:
         messages=[{"role": "user", "content": user_content}],
     )
     raw = msg.content[0].text.strip()
-    # strip possible markdown fences
+
+    # Strip markdown fences
     raw = re.sub(r"^```[a-z]*\n?", "", raw)
     raw = re.sub(r"\n?```$", "", raw)
-    return json.loads(raw)
+    raw = raw.strip()
+
+    # Remove control characters that break JSON (except \n \r \t)
+    raw = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', raw)
+
+    # Try direct parse first
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        pass
+
+    # Extract the outermost JSON object or array
+    for start_char, end_char in [('{', '}'), ('[', ']')]:
+        start = raw.find(start_char)
+        if start == -1:
+            continue
+        # Find matching close by tracking depth
+        depth = 0
+        in_string = False
+        escape_next = False
+        end_pos = -1
+        for i, ch in enumerate(raw[start:], start):
+            if escape_next:
+                escape_next = False
+                continue
+            if ch == '\\' and in_string:
+                escape_next = True
+                continue
+            if ch == '"':
+                in_string = not in_string
+                continue
+            if in_string:
+                continue
+            if ch == start_char:
+                depth += 1
+            elif ch == end_char:
+                depth -= 1
+                if depth == 0:
+                    end_pos = i
+                    break
+        if end_pos != -1:
+            candidate = raw[start:end_pos + 1]
+            try:
+                return json.loads(candidate)
+            except json.JSONDecodeError:
+                # Last resort: truncated JSON — try to close it
+                pass
+
+    # Last resort: close truncated JSON by appending missing structure
+    # Try to complete a truncated object
+    attempt = raw
+    if raw.startswith('{') or raw.startswith('['):
+        open_braces = raw.count('{') - raw.count('}')
+        open_brackets = raw.count('[') - raw.count(']')
+        # Close any open string first (heuristic)
+        if attempt.count('"') % 2 != 0:
+            attempt += '"'
+        attempt += ']' * max(0, open_brackets)
+        attempt += '}' * max(0, open_braces)
+        try:
+            return json.loads(attempt)
+        except json.JSONDecodeError:
+            pass
+
+    raise json.JSONDecodeError("Could not extract valid JSON from AI response", raw, 0)
 
 
 # ── routes ────────────────────────────────────────────────────────────────────
