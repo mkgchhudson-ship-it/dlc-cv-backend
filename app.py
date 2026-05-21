@@ -119,7 +119,7 @@ OCR_DPI             = 250
 MAX_BATCH_FILES     = 25
 # ── CRITICAL FIX: 2048 was truncating Claude's JSON response (~3500 tokens)
 MAX_TOKENS_SINGLE   = 4096
-MAX_TOKENS_BATCH    = 2048               # shorter per-candidate prompt
+MAX_TOKENS_BATCH    = 3072               # upgraded prompt requires more output space
 
 ALLOWED_EXTENSIONS  = {"pdf", "doc", "docx"}
 ANTHROPIC_MODEL     = "claude-opus-4-5"
@@ -545,63 +545,98 @@ CV CONTENT:
 
 
 _PROMPT_BATCH_CANDIDATE = """\
-You are a Principal Assessment Consultant at Direct Labour Consult (DLC), \
-Botswana's leading executive HR advisory practice (est. 2018). \
-Conduct a structured occupational screening of the candidate CV below for a recruiter. \
-Apply DLC's industrial psychology competency framework. \
+You are a Senior Assessment Consultant at Direct Labour Consult (DLC), \
+Botswana's premier Industrial Psychology-Informed Executive Assessment practice. \
+Conduct a rigorous, evidence-based candidate evaluation for the recruitment mandate below. \
+Your assessment must reflect the depth and analytical standard of a Senior Industrial/Organisational \
+Psychology practitioner — not a generic screener. \
 Return ONLY a valid JSON object — no markdown, no code fences, no preamble.
 
-REQUIRED JSON (all fields mandatory — keep text values concise):
+RECRUITMENT MANDATE:
+  Position:        {job_title}
+  Department:      {job_dept}
+  Min. Experience: {job_exp} years
+  Education:       {job_edu}
+  Key Skills:      {job_skills}
+  Job Description: {job_desc}
+  Disqualifiers:   {job_disq}
+
+ASSESSMENT FRAMEWORK — apply all five dimensions:
+  1. COMPETENCY EVIDENCE     Distinguish demonstrated competencies from claimed ones. \
+Cite specific employers, roles, tenures, and achievements from the CV.
+  2. CAREER TRAJECTORY       Analyse progression patterns: ascending, lateral, or fragmented. \
+Note scope of accountability growth and any tenure concerns.
+  3. PERSON-JOB FIT          Calibrate directly against the role demands above. \
+Flag alignment factors and material gaps specific to this mandate.
+  4. BEHAVIOURAL INDICATORS  Infer motivational orientation, resilience signals, and \
+cultural fit from CV structure, tone, content patterns, and career choices.
+  5. OCCUPATIONAL MATURITY   Assess functional readiness relative to the seniority level required \
+for this position.
+
+REQUIRED JSON (all fields mandatory):
 {{
-  "candidate_name":      "full name inferred from CV — use filename stem if not found",
+  "candidate_name":      "Full name inferred from CV. Use filename stem if not found.",
   "overall_score":       integer 0-100,
   "recommendation":      "Hire | Consider | Not Aligned",
-  "executive_summary":   "2 sentences. Confident, professional assessment of this candidate's readiness and positioning. Cite actual CV evidence.",
-  "job_fit_note":        "1 sentence. Specific alignment or gap relative to a competitive professional role.",
+
+  "executive_summary":   "3 sentences. Open with the single most significant finding about this candidate's suitability. Reference specific CV evidence — employer names, role titles, tenures, or quantified achievements. Close with a decisive and consultative assessment stance. Authoritative tone — no generic filler.",
+
+  "job_fit_note":        "1-2 sentences. Specific alignment or gap between this candidate's demonstrated experience and the role requirements stated above. Name the role and evidence.",
 
   "key_strengths": [
-    "Strength citing specific CV evidence",
-    "Strength citing specific CV evidence",
-    "Strength citing specific CV evidence"
+    "Evidence-anchored: cite specific employer / role / achievement from CV, then state what this indicates about capability for this role",
+    "Evidence-anchored: cite specific evidence — then state what this indicates",
+    "Evidence-anchored: cite specific evidence — then state what this indicates"
   ],
   "key_concerns": [
-    "Concern citing specific gap or risk",
-    "Concern citing specific gap or risk"
+    "Name the specific gap or risk — cite absence of evidence or a problematic pattern observed in the CV",
+    "Name the specific gap or risk — cite evidence"
   ],
 
   "behavioural_risk":   "Low | Medium | High",
-  "behavioural_notes":  "1 sentence on behavioural or cultural fit risk indicators. Empty string if Low.",
+  "behavioural_notes":  "Analytical observation on behavioural or motivational risk indicators. Reference tenure patterns, unexplained gaps, career move motivations, or stated interests as signals. Empty string if risk is Low.",
 
   "sections": {{
-    "first_impression":   {{"score": integer 0-100}},
-    "evidence_of_impact": {{"score": integer 0-100}},
-    "role_alignment":     {{"score": integer 0-100}},
-    "ats_compatibility":  {{"score": integer 0-100}}
+    "first_impression":   {{"score": integer 0-100, "rationale": "What does CV structure, formatting, and professional framing signal about this candidate's professional identity and self-presentation standard?"}},
+    "evidence_of_impact": {{"score": integer 0-100, "rationale": "Quality and specificity of achievement evidence — are outcomes quantified, attributed, and credible? Or are responsibilities listed without impact?"}},
+    "role_alignment":     {{"score": integer 0-100, "rationale": "Degree of match between demonstrated experience and the specific functional demands of this role."}},
+    "ats_compatibility":  {{"score": integer 0-100, "rationale": "Keyword density, role-relevant terminology, and structural scannability for this type of position."}}
   }},
 
   "occupational_profile": {{
-    "leadership_readiness":   "Emerging | Developing | Established | Advanced",
-    "operational_maturity":   "Graduate | Junior | Mid-level | Senior | Executive",
-    "strategic_thinking":     "Absent | Limited | Present | Strong",
-    "stakeholder_exposure":   "Internal only | Cross-functional | External / Board-level"
+    "leadership_readiness":  "Emerging | Developing | Established | Advanced",
+    "operational_maturity":  "Graduate | Junior | Mid-level | Senior | Executive",
+    "strategic_thinking":    "Absent | Limited | Present | Strong",
+    "stakeholder_exposure":  "Internal only | Cross-functional | External / Board-level"
   }},
 
-  "recruiter_guidance":     "Recommended for Interview | Recommended for Shortlist | Development Candidate | Not Aligned Currently",
-  "years_experience":       "estimated range e.g. 5-7 years",
-  "education_alignment":    "Exceeds requirements | Meets requirements | Below requirements | Unable to determine",
-  "advisory_note":          "1 sentence. Most important consideration for the hiring manager before proceeding."
+  "competency_assessment": {{
+    "technical_competence":      "Below | Meets | Exceeds — 1-sentence evidence statement citing specific CV content",
+    "analytical_reasoning":      "Below | Meets | Exceeds — 1-sentence evidence statement",
+    "communication_proficiency": "Below | Meets | Exceeds — 1-sentence evidence statement",
+    "leadership_and_influence":  "Below | Meets | Exceeds — 1-sentence evidence statement"
+  }},
+
+  "career_trajectory":   "1-2 sentences. Is the career pattern ascending, lateral, or fragmented? What does the scope of accountability growth — or absence of it — indicate about this candidate's ceiling and professional drive?",
+
+  "recruiter_guidance":  "Recommended for Interview | Recommended for Shortlist | Development Candidate | Not Aligned Currently",
+  "years_experience":    "estimated range e.g. 5-7 years",
+  "education_alignment": "Exceeds requirements | Meets requirements | Below requirements | Unable to determine",
+  "advisory_note":       "1-2 sentences. The single most important nuanced observation for the hiring manager — something that standard CV screening would miss. May relate to a hidden strength, a structural risk, or a context-specific consideration."
 }}
 
 SCORING FRAMEWORK:
-  80-100  Strong profile — recommend Hire
-  60-79   Viable with reservations — recommend Consider
-  0-59    Significant gaps — recommend Not Aligned
+  80-100  Strong, well-evidenced profile — recommend Hire
+  60-79   Viable candidate with reservations — recommend Consider
+  0-59    Significant gaps against mandate requirements — recommend Not Aligned
 
-IMPORTANT:
-- Every observation must cite actual CV content — no generic filler
-- Use professional HR advisory tone — never robotic or harsh
-- Behavioural risk must reflect real CV patterns, not assumptions
-- If name is unclear, use the filename stem as candidate_name
+QUALITY STANDARDS:
+- Every observation must cite specific CV content: employer name, role title, tenure, metric, or named achievement
+- No generic filler (avoid: "demonstrates strong experience", "has a proven track record", "brings valuable skills")
+- Tone: authoritative, consultative, professionally direct — not robotic, not harsh
+- Clearly distinguish demonstrated evidence from reasonable inferences
+- If job description is blank, calibrate against established professional standards for this role type
+- If candidate name is unclear, derive it from the filename
 
 CV CONTENT:
 ---
@@ -651,10 +686,12 @@ def analyse_with_claude(cv_text: str, name_hint: str = "") -> dict:
     return result
 
 
-def analyse_batch_candidate(cv_text: str, filename: str) -> dict:
+def analyse_batch_candidate(cv_text: str, filename: str, job_params: dict = None) -> dict:
     """
     Single candidate analysis for /analyze-batch endpoint.
     Returns a dict with ALL keys the recruiter-upload.html frontend expects.
+    job_params: dict with keys job_title, job_dept, job_exp, job_edu,
+                job_skills, job_desc, job_disq — from request.form
     """
     if _client is None:
         raise RuntimeError("Analysis service not configured.")
@@ -662,12 +699,25 @@ def analyse_batch_candidate(cv_text: str, filename: str) -> dict:
     if len(cv_text) > 10_000:
         cv_text = cv_text[:10_000] + "\n\n[Truncated]"
 
+    # Build prompt with job context (fall back to safe defaults if not provided)
+    p = job_params or {}
+    prompt = _PROMPT_BATCH_CANDIDATE.format(
+        cv_text   = cv_text,
+        job_title = p.get("job_title", "Not specified"),
+        job_dept  = p.get("job_dept",  "Not specified"),
+        job_exp   = p.get("job_exp",   "Not specified"),
+        job_edu   = p.get("job_edu",   "Not specified"),
+        job_skills= p.get("job_skills","Not specified"),
+        job_desc  = p.get("job_desc",  ""),
+        job_disq  = p.get("job_disq",  "None stated"),
+    )
+
     msg = _client.messages.create(
         model=ANTHROPIC_MODEL,
         max_tokens=MAX_TOKENS_BATCH,
         messages=[{
             "role":    "user",
-            "content": _PROMPT_BATCH_CANDIDATE.format(cv_text=cv_text),
+            "content": prompt,
         }],
     )
 
@@ -912,6 +962,22 @@ def analyze_batch():
         log.warning("BATCH ERROR [%s]: %s", ts, msg)
         return jsonify({"success": False, "error": msg}), status
 
+    # ── Read job parameters sent by the frontend ──────────────────────────────
+    job_params = {
+        "job_title":  (request.form.get("job_title")  or "").strip(),
+        "job_dept":   (request.form.get("job_dept")   or "").strip(),
+        "job_exp":    (request.form.get("job_exp")    or "").strip(),
+        "job_edu":    (request.form.get("job_edu")    or "").strip(),
+        "job_skills": (request.form.get("job_skills") or "").strip(),
+        "job_desc":   (request.form.get("job_desc")   or "").strip(),
+        "job_disq":   (request.form.get("job_disq")   or "").strip(),
+    }
+    log.info(
+        "BATCH JOB PARAMS  title=%r  dept=%r  exp=%r  edu=%r",
+        job_params["job_title"], job_params["job_dept"],
+        job_params["job_exp"],   job_params["job_edu"],
+    )
+
     # 1. Detect uploaded files across all possible field names
     uploaded = _get_batch_files(request)
 
@@ -992,7 +1058,7 @@ def analyze_batch():
 
         # Claude analysis
         try:
-            analysis = analyse_batch_candidate(cv_text, filename)
+            analysis = analyse_batch_candidate(cv_text, filename, job_params)
         except RuntimeError as exc:
             log.error("Batch Claude error [%s]: %s", filename, exc)
             errors.append({"filename": filename, "error": str(exc)})
@@ -1065,21 +1131,23 @@ def analyze_batch():
         len(results), hire_count, consider_count, avg_score, elapsed,
     )
 
+    # ── FLAT response — frontend reads data.ranked_candidates directly ──────
+    # DO NOT nest under "data:" — recruiter-upload.html does:
+    #   var data = await res.json();
+    #   renderResults(data, params);
+    # and renderResults reads data.ranked_candidates / data.total_candidates.
     return jsonify({
-        "success": True,
-        "data": {
-            # ── Keys the recruiter-upload.html frontend reads directly ────
-            "ranked_candidates": results,          # was "results"
-            "total_candidates":  len(results),     # was "total_processed"
-            "summary":           summary,          # was missing entirely
-            "executive_report":  executive_report, # pool-level summary
-            # ── Metadata ─────────────────────────────────────────────────
-            "total_submitted":   len(valid_files),
-            "errors":            errors,
-            "processing_time_s": elapsed,
-            "timestamp_utc":     ts,
-            "backend_version":   BACKEND_VERSION,
-        },
+        "success":           True,
+        "ranked_candidates": results,
+        "total_candidates":  len(results),
+        "summary":           summary,
+        "executive_report":  executive_report,
+        "job_title":         job_params.get("job_title", ""),
+        "total_submitted":   len(valid_files),
+        "errors":            errors,
+        "processing_time_s": elapsed,
+        "timestamp_utc":     ts,
+        "backend_version":   BACKEND_VERSION,
     }), 200
 
 
