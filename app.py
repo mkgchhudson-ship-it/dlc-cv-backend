@@ -50,6 +50,19 @@ def keep_warm():
 threading.Thread(target=keep_warm, daemon=True).start()
 logger.info("[keep-warm] self-ping thread started — backend will never sleep")
 
+# ── admin key ─────────────────────────────────────────────────────────────────
+ADMIN_KEY = os.environ.get("ADMIN_KEY", "dlc-admin-2026")
+
+# ── in-memory submission log (last 200 entries) ───────────────────────────────
+_log_lock = threading.Lock()
+_submissions = []   # list of dicts, newest first
+
+def log_submission(entry: dict):
+    with _log_lock:
+        _submissions.insert(0, entry)
+        if len(_submissions) > 200:
+            _submissions.pop()
+
 
 # ── text extraction ───────────────────────────────────────────────────────────
 def extract_text(file_storage):
@@ -183,13 +196,25 @@ def analyze():
         }
 
         logger.info(f"[/analyze] SUCCESS name={name} score={data['score']}")
+        log_submission({
+            "type": "individual",
+            "name": name,
+            "email": email,
+            "score": data["score"],
+            "market_readiness": data["market_readiness"],
+            "file": file.filename,
+            "status": "success",
+            "timestamp": ts,
+        })
         return jsonify({"success": True, "data": data})
 
     except json.JSONDecodeError as e:
         logger.error(f"[/analyze] JSON parse error: {e}")
+        log_submission({"type":"individual","name":name,"email":email,"status":"error","error":"JSON parse","timestamp":ts})
         return jsonify({"success": False, "error": "Analysis engine returned an unexpected response. Please try again."}), 502
     except Exception as e:
         logger.error(f"[/analyze] ERROR: {e}", exc_info=True)
+        log_submission({"type":"individual","name":name,"email":email,"status":"error","error":str(e)[:120],"timestamp":ts})
         return jsonify({"success": False, "error": "Analysis failed. Please try again in a moment."}), 500
 
 
@@ -242,6 +267,13 @@ def analyze_batch():
             r["rank"] = i
 
         logger.info(f"[/analyze-batch] SUCCESS job={job_title} candidates={len(results)}")
+        log_submission({
+            "type": "batch",
+            "job_title": job_title,
+            "total_candidates": len(results),
+            "status": "success",
+            "timestamp": ts,
+        })
         return jsonify({
             "success": True,
             "job_title": job_title,
@@ -253,10 +285,54 @@ def analyze_batch():
 
     except json.JSONDecodeError as e:
         logger.error(f"[/analyze-batch] JSON parse error: {e}")
+        log_submission({"type":"batch","job_title":job_title,"status":"error","error":"JSON parse","timestamp":ts})
         return jsonify({"success": False, "error": "Analysis engine returned unexpected response. Please try again."}), 502
     except Exception as e:
         logger.error(f"[/analyze-batch] ERROR: {e}", exc_info=True)
+        log_submission({"type":"batch","job_title":job_title,"status":"error","error":str(e)[:120],"timestamp":ts})
         return jsonify({"success": False, "error": "Batch analysis failed. Please try again."}), 500
+
+
+# ── /admin/submissions — protected log endpoint ───────────────────────────────
+def check_admin(req):
+    key = req.headers.get("X-Admin-Key") or req.args.get("key")
+    return key == ADMIN_KEY
+
+@app.route("/admin/submissions", methods=["GET"])
+def admin_submissions():
+    if not check_admin(request):
+        return jsonify({"error": "Unauthorized"}), 401
+    with _log_lock:
+        return jsonify({"submissions": list(_submissions), "total": len(_submissions)})
+
+@app.route("/admin/stats", methods=["GET"])
+def admin_stats():
+    if not check_admin(request):
+        return jsonify({"error": "Unauthorized"}), 401
+    with _log_lock:
+        total = len(_submissions)
+        success = sum(1 for s in _submissions if s.get("status") == "success")
+        individual = sum(1 for s in _submissions if s.get("type") == "individual")
+        batch = sum(1 for s in _submissions if s.get("type") == "batch")
+        scores = [s["score"] for s in _submissions if s.get("score")]
+        avg_score = round(sum(scores) / len(scores), 1) if scores else 0
+    return jsonify({
+        "total_submissions": total,
+        "successful": success,
+        "failed": total - success,
+        "individual_cvs": individual,
+        "batch_jobs": batch,
+        "avg_score": avg_score,
+        "uptime_since": datetime.utcnow().isoformat(),
+    })
+
+@app.route("/admin/test", methods=["POST"])
+def admin_test():
+    """Admin-only test endpoint — bypasses payment, runs full analysis."""
+    if not check_admin(request):
+        return jsonify({"error": "Unauthorized"}), 401
+    # Delegate to the normal analyze logic
+    return analyze()
 
 
 # ── run ───────────────────────────────────────────────────────────────────────
