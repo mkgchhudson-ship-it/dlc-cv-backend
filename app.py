@@ -545,24 +545,63 @@ CV CONTENT:
 
 
 _PROMPT_BATCH_CANDIDATE = """\
-You are a senior HR analyst at Direct Labour Consult (DLC). \
-Evaluate this candidate CV for a recruiter making a hiring decision. \
-Return ONLY a raw JSON object — no markdown, no code fences, no explanation.
+You are a Principal Assessment Consultant at Direct Labour Consult (DLC), \
+Botswana's leading executive HR advisory practice (est. 2018). \
+Conduct a structured occupational screening of the candidate CV below for a recruiter. \
+Apply DLC's industrial psychology competency framework. \
+Return ONLY a valid JSON object — no markdown, no code fences, no preamble.
 
-Required JSON:
+REQUIRED JSON (all fields mandatory — keep text values concise):
 {{
-  "candidate_name":    "inferred from CV or use filename if not found",
-  "overall_score":     integer 0-100,
-  "recommendation":    "Strong Hire | Consider | Risk",
-  "recommendation_reason": "1 sentence explaining the recommendation",
-  "top_strengths":     ["str","str","str"],
-  "critical_gaps":     ["str","str"],
-  "behavioural_risk":  "None identified | Low | Medium | High",
-  "behavioural_risk_note": "1 sentence or empty string",
-  "advisory_note":     "1 sentence for the hiring manager"
+  "candidate_name":      "full name inferred from CV — use filename stem if not found",
+  "overall_score":       integer 0-100,
+  "recommendation":      "Hire | Consider | Not Aligned",
+  "executive_summary":   "2 sentences. Confident, professional assessment of this candidate's readiness and positioning. Cite actual CV evidence.",
+  "job_fit_note":        "1 sentence. Specific alignment or gap relative to a competitive professional role.",
+
+  "key_strengths": [
+    "Strength citing specific CV evidence",
+    "Strength citing specific CV evidence",
+    "Strength citing specific CV evidence"
+  ],
+  "key_concerns": [
+    "Concern citing specific gap or risk",
+    "Concern citing specific gap or risk"
+  ],
+
+  "behavioural_risk":   "Low | Medium | High",
+  "behavioural_notes":  "1 sentence on behavioural or cultural fit risk indicators. Empty string if Low.",
+
+  "sections": {{
+    "first_impression":   {{"score": integer 0-100}},
+    "evidence_of_impact": {{"score": integer 0-100}},
+    "role_alignment":     {{"score": integer 0-100}},
+    "ats_compatibility":  {{"score": integer 0-100}}
+  }},
+
+  "occupational_profile": {{
+    "leadership_readiness":   "Emerging | Developing | Established | Advanced",
+    "operational_maturity":   "Graduate | Junior | Mid-level | Senior | Executive",
+    "strategic_thinking":     "Absent | Limited | Present | Strong",
+    "stakeholder_exposure":   "Internal only | Cross-functional | External / Board-level"
+  }},
+
+  "recruiter_guidance":     "Recommended for Interview | Recommended for Shortlist | Development Candidate | Not Aligned Currently",
+  "years_experience":       "estimated range e.g. 5-7 years",
+  "education_alignment":    "Exceeds requirements | Meets requirements | Below requirements | Unable to determine",
+  "advisory_note":          "1 sentence. Most important consideration for the hiring manager before proceeding."
 }}
 
-Scoring: 80-100 = Strong Hire | 60-79 = Consider | 0-59 = Risk
+SCORING FRAMEWORK:
+  80-100  Strong profile — recommend Hire
+  60-79   Viable with reservations — recommend Consider
+  0-59    Significant gaps — recommend Not Aligned
+
+IMPORTANT:
+- Every observation must cite actual CV content — no generic filler
+- Use professional HR advisory tone — never robotic or harsh
+- Behavioural risk must reflect real CV patterns, not assumptions
+- If name is unclear, use the filename stem as candidate_name
 
 CV CONTENT:
 ---
@@ -613,7 +652,10 @@ def analyse_with_claude(cv_text: str, name_hint: str = "") -> dict:
 
 
 def analyse_batch_candidate(cv_text: str, filename: str) -> dict:
-    """Single candidate analysis for /analyze-batch endpoint."""
+    """
+    Single candidate analysis for /analyze-batch endpoint.
+    Returns a dict with ALL keys the recruiter-upload.html frontend expects.
+    """
     if _client is None:
         raise RuntimeError("Analysis service not configured.")
 
@@ -632,8 +674,51 @@ def analyse_batch_candidate(cv_text: str, filename: str) -> dict:
     raw = msg.content[0].text.strip()
     result = safe_parse_json_v2(raw, context="batch_{}".format(filename))
 
+    # ── Guarantee candidate_name is always set ────────────────────────────
     if not result.get("candidate_name"):
-        result["candidate_name"] = Path(filename).stem.replace("_", " ").replace("-", " ")
+        result["candidate_name"] = (
+            Path(filename).stem.replace("_", " ").replace("-", " ").title()
+        )
+
+    # ── Normalise recommendation to values recClass() recognises ──────────
+    rec = (result.get("recommendation") or "").strip()
+    if rec.lower() in ("hire", "strong hire"):
+        result["recommendation"] = "Hire"
+    elif rec.lower() in ("consider",):
+        result["recommendation"] = "Consider"
+    else:
+        result["recommendation"] = "Not Aligned"
+
+    # ── Normalise behavioural_risk to values riskClass() recognises ───────
+    br = (result.get("behavioural_risk") or "Low").strip()
+    if "high" in br.lower():
+        result["behavioural_risk"] = "High"
+    elif "med" in br.lower():
+        result["behavioural_risk"] = "Medium"
+    else:
+        result["behavioural_risk"] = "Low"
+
+    # ── Guarantee sections block exists with score keys ───────────────────
+    sects = result.get("sections") or {}
+    for sk in ("first_impression", "evidence_of_impact", "role_alignment", "ats_compatibility"):
+        if sk not in sects or not isinstance(sects.get(sk), dict):
+            sects[sk] = {"score": 0}
+        elif "score" not in sects[sk]:
+            sects[sk]["score"] = 0
+    result["sections"] = sects
+
+    # ── Guarantee frontend list keys ──────────────────────────────────────
+    if not result.get("key_strengths"):
+        result["key_strengths"] = result.pop("top_strengths", []) or []
+    if not result.get("key_concerns"):
+        result["key_concerns"] = result.pop("critical_gaps", []) or []
+    if not result.get("behavioural_notes"):
+        result["behavioural_notes"] = result.pop("behavioural_risk_note", "") or ""
+    if not result.get("executive_summary"):
+        result["executive_summary"] = result.pop("recommendation_reason", "") or ""
+
+    # ── _filename — frontend uses c._filename for display ─────────────────
+    result["_filename"] = filename
 
     return result
 
@@ -917,7 +1002,7 @@ def analyze_batch():
             errors.append({"filename": filename, "error": "Analysis failed."})
             continue
 
-        analysis["filename"]         = filename
+        analysis["_filename"]        = filename   # already set but ensure
         analysis["extraction_method"] = method
         results.append(analysis)
 
@@ -930,30 +1015,70 @@ def analyze_batch():
 
     # 3. Rank by overall_score descending
     results.sort(key=lambda x: x.get("overall_score", 0), reverse=True)
-
-    # Assign rank numbers
     for rank, r in enumerate(results, start=1):
         r["rank"] = rank
+
+    # 4. Build summary object  (frontend reads data.summary.hire / .consider / .average_score)
+    hire_count    = sum(1 for r in results if r.get("recommendation") == "Hire")
+    consider_count = sum(1 for r in results if r.get("recommendation") == "Consider")
+    not_aligned   = sum(1 for r in results if r.get("recommendation") == "Not Aligned")
+    scores        = [r.get("overall_score", 0) for r in results if isinstance(r.get("overall_score"), (int, float))]
+    avg_score     = round(sum(scores) / len(scores)) if scores else 0
+    top_score     = max(scores) if scores else 0
+
+    if avg_score >= 72:
+        pool_quality = "Strong candidate pool"
+    elif avg_score >= 55:
+        pool_quality = "Mixed candidate pool"
+    else:
+        pool_quality = "Thin candidate pool — consider widening the search"
+
+    summary = {
+        "hire":          hire_count,
+        "consider":      consider_count,
+        "not_aligned":   not_aligned,
+        "average_score": avg_score,
+        "top_score":     top_score,
+        "pool_quality":  pool_quality,
+    }
+
+    # 5. Pool-level executive report (computed — no extra Claude call)
+    top = results[0] if results else {}
+    executive_report = (
+        "{} candidate{} assessed. {} recommended for hire, {} for consideration. "
+        "Average pool score: {}/100. Top candidate: {} ({}). {}".format(
+            len(results),
+            "s" if len(results) != 1 else "",
+            hire_count,
+            consider_count,
+            avg_score,
+            top.get("candidate_name", "N/A"),
+            top.get("overall_score", "N/A"),
+            pool_quality + ".",
+        )
+    )
 
     elapsed = round(time.time() - t0, 2)
 
     log.info(
-        "BATCH DONE  processed=%d  errors=%d  top_score=%s  time=%.2fs",
-        len(results), len(errors),
-        results[0].get("overall_score", "?") if results else "N/A",
-        elapsed,
+        "BATCH DONE  processed=%d  hire=%d  consider=%d  avg=%d  time=%.2fs",
+        len(results), hire_count, consider_count, avg_score, elapsed,
     )
 
     return jsonify({
         "success": True,
         "data": {
-            "results":          results,
-            "total_processed":  len(results),
-            "total_submitted":  len(valid_files),
-            "errors":           errors,
+            # ── Keys the recruiter-upload.html frontend reads directly ────
+            "ranked_candidates": results,          # was "results"
+            "total_candidates":  len(results),     # was "total_processed"
+            "summary":           summary,          # was missing entirely
+            "executive_report":  executive_report, # pool-level summary
+            # ── Metadata ─────────────────────────────────────────────────
+            "total_submitted":   len(valid_files),
+            "errors":            errors,
             "processing_time_s": elapsed,
-            "timestamp_utc":    ts,
-            "backend_version":  BACKEND_VERSION,
+            "timestamp_utc":     ts,
+            "backend_version":   BACKEND_VERSION,
         },
     }), 200
 
