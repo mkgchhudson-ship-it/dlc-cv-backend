@@ -223,7 +223,7 @@ def analyze():
 def analyze_batch():
     ts = datetime.utcnow().isoformat()
     job_title = request.form.get("job_title", "Open Position")
-    files = request.files.getlist("files")
+    files = request.files.getlist("files") or request.files.getlist("cvs[]")
 
     logger.info(f"[/analyze-batch] job={job_title} count={len(files)} ts={ts}")
 
