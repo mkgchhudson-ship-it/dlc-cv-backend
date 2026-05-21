@@ -2,28 +2,21 @@ import os
 import json
 import logging
 import tempfile
+import threading
+import time
 import re
-import gc
 from datetime import datetime
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import anthropic
+import requests
 
+# ── optional extraction libs ──────────────────────────────────────────────────
 try:
     import pdfplumber
-    HAS_PDFPLUMBER = True
+    HAS_PDF = True
 except ImportError:
-    HAS_PDFPLUMBER = False
-
-try:
-    import pypdf
-    HAS_PYPDF = True
-except ImportError:
-    try:
-        import PyPDF2 as pypdf
-        HAS_PYPDF = True
-    except ImportError:
-        HAS_PYPDF = False
+    HAS_PDF = False
 
 try:
     from docx import Document as DocxDocument
@@ -31,352 +24,242 @@ try:
 except ImportError:
     HAS_DOCX = False
 
-logging.basicConfig(level=logging.INFO)
+# ── app setup ─────────────────────────────────────────────────────────────────
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
-app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024  # 50MB
 CORS(app, origins=["*"])
 
 client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
 
-MAX_TEXT_CHARS = 15000
-MAX_PAGES = 30
+BACKEND_URL = os.environ.get("BACKEND_URL", "https://dlc-cv-backend.onrender.com")
 
-def extract_text_from_path(tmp_path, filename):
-    text = ""
-    fname = filename.lower()
-
-    if fname.endswith(".pdf"):
-        if HAS_PDFPLUMBER:
-            try:
-                with pdfplumber.open(tmp_path) as pdf:
-                    chunks = []
-                    for page in pdf.pages[:MAX_PAGES]:
-                        t = page.extract_text()
-                        if t:
-                            chunks.append(t)
-                    text = "\n".join(chunks)
-            except Exception as e:
-                logger.warning(f"pdfplumber failed: {e}")
-
-        if not text or len(text) < 100:
-            if HAS_PYPDF:
-                try:
-                    reader = pypdf.PdfReader(tmp_path)
-                    chunks = []
-                    for page in reader.pages[:MAX_PAGES]:
-                        t = page.extract_text()
-                        if t:
-                            chunks.append(t)
-                    text = "\n".join(chunks)
-                except Exception as e:
-                    logger.warning(f"pypdf failed: {e}")
-
-        if not text or len(text) < 100:
-            try:
-                with open(tmp_path, "rb") as f:
-                    raw = f.read(5 * 1024 * 1024)
-                strings = re.findall(b'[\\x20-\\x7E]{5,}', raw)
-                text = " ".join(s.decode("ascii", errors="ignore") for s in strings)
-            except Exception as e:
-                logger.warning(f"PDF raw extraction failed: {e}")
-
-    elif fname.endswith(".docx"):
-        if HAS_DOCX:
-            try:
-                doc = DocxDocument(tmp_path)
-                paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
-                for table in doc.tables:
-                    for row in table.rows:
-                        for cell in row.cells:
-                            if cell.text.strip():
-                                paragraphs.append(cell.text)
-                text = "\n".join(paragraphs)
-            except Exception as e:
-                logger.warning(f"docx extraction failed: {e}")
-
-    elif fname.endswith(".doc"):
+# ── keep-warm ping ─────────────────────────────────────────────────────────────
+# Render free tier sleeps after 15 min inactivity. This self-pings every 13 min
+# so the service NEVER goes cold for end users.
+def keep_warm():
+    while True:
         try:
-            import subprocess
-            result = subprocess.run(["antiword", tmp_path], capture_output=True, text=True, timeout=30)
-            if result.returncode == 0 and result.stdout.strip():
-                text = result.stdout
-        except Exception:
-            pass
+            time.sleep(13 * 60)  # 13 minutes
+            r = requests.get(f"{BACKEND_URL}/health", timeout=10)
+            logger.info(f"[keep-warm] ping → {r.status_code}")
+        except Exception as e:
+            logger.warning(f"[keep-warm] ping failed: {e}")
 
-        if not text or len(text) < 80:
-            try:
-                if HAS_DOCX:
-                    doc = DocxDocument(tmp_path)
-                    text = "\n".join(p.text for p in doc.paragraphs if p.text.strip())
-            except Exception:
-                pass
-
-        if not text or len(text) < 80:
-            try:
-                with open(tmp_path, "rb") as f:
-                    raw = f.read(3 * 1024 * 1024)
-                for encoding in ("utf-16-le", "latin-1"):
-                    try:
-                        decoded = raw.decode(encoding, errors="ignore")
-                        clean = re.sub(r'[^\x20-\x7E\n\r\t]', ' ', decoded)
-                        words = [w for w in clean.split() if len(w) > 1]
-                        candidate = " ".join(words)
-                        if len(candidate) > len(text):
-                            text = candidate
-                    except Exception:
-                        pass
-            except Exception as e:
-                logger.warning(f".doc raw extraction failed: {e}")
-    else:
-        try:
-            with open(tmp_path, "rb") as f:
-                raw = f.read(2 * 1024 * 1024)
-            text = raw.decode("utf-8", errors="ignore")
-        except Exception:
-            pass
-
-    return text.strip()[:MAX_TEXT_CHARS]
+threading.Thread(target=keep_warm, daemon=True).start()
+logger.info("[keep-warm] self-ping thread started — backend will never sleep")
 
 
+# ── text extraction ───────────────────────────────────────────────────────────
 def extract_text(file_storage):
-    filename = file_storage.filename or "upload.pdf"
-    ext = os.path.splitext(filename.lower())[1] or ".pdf"
+    filename = (file_storage.filename or "").lower()
+    ext = os.path.splitext(filename)[1] or ".tmp"
     with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
         file_storage.save(tmp.name)
         tmp_path = tmp.name
+
+    text = ""
+    method = "unknown"
     try:
-        return extract_text_from_path(tmp_path, filename)
+        if filename.endswith(".pdf") and HAS_PDF:
+            with pdfplumber.open(tmp_path) as pdf:
+                text = "\n".join(page.extract_text() or "" for page in pdf.pages)
+            method = "pdfplumber"
+        elif filename.endswith((".docx", ".doc")) and HAS_DOCX:
+            doc = DocxDocument(tmp_path)
+            text = "\n".join(p.text for p in doc.paragraphs)
+            method = "python-docx"
+        else:
+            with open(tmp_path, "rb") as f:
+                text = f.read().decode("utf-8", errors="ignore")
+            method = "raw-decode"
     finally:
         try:
             os.unlink(tmp_path)
         except Exception:
             pass
 
+    logger.info(f"[extract] method={method} chars={len(text)}")
+    return text.strip(), method
 
-SINGLE_SYSTEM = """You are a senior HR consultant and career strategist at Direct Labour Consult.
-Analyse the provided CV and return ONLY a valid JSON object — no markdown, no preamble.
-JSON structure:
+
+# ── Claude helpers ────────────────────────────────────────────────────────────
+SINGLE_SYSTEM = """You are a senior HR consultant at Direct Labour Consult, Gaborone, Botswana.
+Analyse the CV and return ONLY a JSON object — no markdown, no extra text.
+
 {
-  "overall_score": <integer 0-100>,
-  "market_readiness": "<Excellent|Strong|Developing|Needs Improvement>",
-  "candidate_name": "<name from CV or 'Candidate'>",
-  "executive_summary": "<2-3 sentence overall assessment>",
-  "top_strengths": ["<strength 1>", "<strength 2>", "<strength 3>"],
-  "critical_improvements": ["<improvement 1>", "<improvement 2>", "<improvement 3>"],
-  "sections": {
-    "first_impression":     {"score": <0-100>, "feedback": "<text>", "strengths": ["..."], "improvements": ["..."]},
-    "value_signal":         {"score": <0-100>, "feedback": "<text>", "strengths": ["..."], "improvements": ["..."]},
-    "evidence_of_impact":   {"score": <0-100>, "feedback": "<text>", "strengths": ["..."], "improvements": ["..."]},
-    "role_alignment":       {"score": <0-100>, "feedback": "<text>", "strengths": ["..."], "improvements": ["..."]},
-    "ats_compatibility":    {"score": <0-100>, "feedback": "<text>", "strengths": ["..."], "improvements": ["..."]},
-    "market_positioning":   {"score": <0-100>, "feedback": "<text>", "strengths": ["..."], "improvements": ["..."]}
-  },
-  "rewritten_section": {
-    "section_name": "<e.g. Professional Summary>",
-    "original":     "<original text from CV>",
-    "rewritten":    "<professionally rewritten version>"
-  }
+  "score": <0-100 integer>,
+  "market_readiness": "<Excellent|Strong|Developing|Needs Work>",
+  "strengths": ["<strength 1>", "<strength 2>", "<strength 3>"],
+  "improvements": ["<action 1>", "<action 2>", "<action 3>"],
+  "rewrite_example": "<rewritten summary paragraph>",
+  "advisory_note": "<1-2 sentence personalised closing advice>"
 }"""
 
-BATCH_SYSTEM = """You are a senior HR consultant at Direct Labour Consult performing evidence-based candidate shortlisting.
-You will receive a full job specification AND a candidate CV. Score the candidate STRICTLY against the job requirements.
-Return ONLY a valid JSON object — no markdown, no preamble.
+BATCH_SYSTEM = """You are a senior HR consultant at Direct Labour Consult.
+You will receive multiple CVs. Score and rank ALL of them. Return ONLY a JSON array — no markdown.
 
-JSON structure:
+Each element:
 {
-  "candidate_name":    "<full name from CV or Candidate X>",
-  "overall_score":     <integer 0-100 reflecting match to THIS specific job>,
-  "market_readiness":  "<Excellent|Strong|Developing|Needs Improvement>",
-  "recommendation":    "<Hire|Consider|Do Not Hire>",
-  "executive_summary": "<2-3 sentence summary focused on fit for this specific role>",
-  "job_fit_note":      "<1 sentence: how well this candidate matches the job advert>",
-  "key_strengths":     ["<job-relevant strength 1>", "<strength 2>", "<strength 3>"],
-  "key_concerns":      ["<concern vs job requirements 1>", "<concern 2>"],
-  "skills_matched":    ["<required skill found in CV>"],
-  "skills_missing":    ["<required skill NOT in CV>"],
-  "experience_match":  "<Exceeds|Meets|Below|Unknown> requirements",
-  "education_match":   "<Exceeds|Meets|Below|Unknown> requirements",
-  "behavioural_risk":  "<Low|Medium|High>",
-  "behavioural_notes": "<1-2 sentences on behavioural fit signals>",
-  "sections": {
-    "first_impression":   {"score": <0-100>, "feedback": "<text>"},
-    "evidence_of_impact": {"score": <0-100>, "feedback": "<text>"},
-    "role_alignment":     {"score": <0-100>, "feedback": "<text based on job spec>"},
-    "ats_compatibility":  {"score": <0-100>, "feedback": "<text>"}
-  }
-}
-
-RULES: Score against the SPECIFIC job. If disqualifying criteria match, set recommendation to Do Not Hire and score below 30. Be honest — recruiters need accuracy."""
+  "rank": <1-based integer>,
+  "name": "<candidate name or 'Candidate N' if unknown>",
+  "score": <0-100 integer>,
+  "market_readiness": "<Excellent|Strong|Developing|Needs Work>",
+  "strengths": ["...", "..."],
+  "improvements": ["...", "..."],
+  "hire_recommendation": "<Strong Yes|Yes|Maybe|No>",
+  "summary": "<2-sentence hiring manager summary>"
+}"""
 
 
-def parse_json_response(raw):
-    raw = raw.strip()
-    raw = re.sub(r'^```(?:json)?\s*', '', raw)
-    raw = re.sub(r'\s*```$', '', raw)
+def call_claude(system_prompt: str, user_content: str) -> dict | list:
+    msg = client.messages.create(
+        model="claude-opus-4-5",
+        max_tokens=4096,
+        system=system_prompt,
+        messages=[{"role": "user", "content": user_content}],
+    )
+    raw = msg.content[0].text.strip()
+    # strip possible markdown fences
+    raw = re.sub(r"^```[a-z]*\n?", "", raw)
+    raw = re.sub(r"\n?```$", "", raw)
     return json.loads(raw)
 
 
-def call_claude(system, prompt, max_tokens=2000):
-    message = client.messages.create(
-        model="claude-sonnet-4-5",
-        max_tokens=max_tokens,
-        system=system,
-        messages=[{"role": "user", "content": prompt}]
-    )
-    return message.content[0].text
-
-
+# ── routes ────────────────────────────────────────────────────────────────────
 @app.route("/health", methods=["GET"])
 def health():
-    return jsonify({
-        "service": "DLC CV Analyser",
-        "status": "ok",
-        "version": "v5",
-        "timestamp": datetime.utcnow().isoformat() + "+00:00"
-    })
+    return jsonify({"status": "ok", "timestamp": datetime.utcnow().isoformat()})
 
 
+@app.route("/", methods=["GET"])
+def root():
+    return jsonify({"service": "DLC CV Backend", "status": "running"})
+
+
+# ── /analyze — single CV ──────────────────────────────────────────────────────
 @app.route("/analyze", methods=["POST"])
 def analyze():
+    ts = datetime.utcnow().isoformat()
+    name = request.form.get("name", "Unknown")
+    email = request.form.get("email", "")
+    file = request.files.get("file")
+
+    logger.info(f"[/analyze] name={name} email={email} ts={ts}")
+
+    if not file or not file.filename:
+        return jsonify({"success": False, "error": "No CV file uploaded."}), 400
+
+    fname = file.filename.lower()
+    if not fname.endswith((".pdf", ".doc", ".docx")):
+        return jsonify({"success": False, "error": "Only PDF, DOC, or DOCX files accepted."}), 400
+
+    file.seek(0, 2)
+    size = file.tell()
+    file.seek(0)
+    if size > 10 * 1024 * 1024:
+        return jsonify({"success": False, "error": "File too large. Maximum 10 MB."}), 400
+
     try:
-        if "cv" not in request.files:
-            return jsonify({"success": False, "error": "No CV file provided"}), 400
-        cv_file = request.files["cv"]
-        job_title = request.form.get("job_title", "")
-        cv_text = extract_text(cv_file)
-        logger.info(f"Single CV: {len(cv_text)} chars")
-        if not cv_text or len(cv_text) < 80:
-            return jsonify({"success": False, "error": "Could not extract text. Please use a readable PDF or Word document."}), 400
-        raw = call_claude(SINGLE_SYSTEM, f"JOB TITLE: {job_title}\n\nCV TEXT:\n{cv_text}", max_tokens=2000)
-        result = parse_json_response(raw)
-        gc.collect()
-        return jsonify({"success": True, "data": result})
+        cv_text, method = extract_text(file)
+        if len(cv_text) < 50:
+            return jsonify({"success": False, "error": "Could not read CV content. Please try a different format."}), 422
+
+        result = call_claude(SINGLE_SYSTEM, f"Name: {name}\n\nCV TEXT:\n{cv_text}")
+
+        # normalise field names for legacy frontend compatibility
+        data = {
+            "score":            result.get("score", result.get("overall_score", 0)),
+            "market_readiness": result.get("market_readiness", ""),
+            "strengths":        result.get("strengths", result.get("top_strengths", [])),
+            "improvements":     result.get("improvements", result.get("key_improvements", [])),
+            "rewrite_example":  result.get("rewrite_example", result.get("rewritten_summary", "")),
+            "advisory_note":    result.get("advisory_note", ""),
+            "name":             name,
+            "email":            email,
+            "extraction_method": method,
+            "analysed_at":      ts,
+        }
+
+        logger.info(f"[/analyze] SUCCESS name={name} score={data['score']}")
+        return jsonify({"success": True, "data": data})
+
+    except json.JSONDecodeError as e:
+        logger.error(f"[/analyze] JSON parse error: {e}")
+        return jsonify({"success": False, "error": "Analysis engine returned an unexpected response. Please try again."}), 502
     except Exception as e:
-        logger.error(f"Analyze error: {e}")
-        return jsonify({"success": False, "error": str(e)}), 500
+        logger.error(f"[/analyze] ERROR: {e}", exc_info=True)
+        return jsonify({"success": False, "error": "Analysis failed. Please try again in a moment."}), 500
 
 
+# ── /analyze-batch — recruiter multi-CV ───────────────────────────────────────
 @app.route("/analyze-batch", methods=["POST"])
 def analyze_batch():
+    ts = datetime.utcnow().isoformat()
+    job_title = request.form.get("job_title", "Open Position")
+    files = request.files.getlist("files")
+
+    logger.info(f"[/analyze-batch] job={job_title} count={len(files)} ts={ts}")
+
+    if not files or len(files) == 0:
+        return jsonify({"success": False, "error": "No CV files uploaded."}), 400
+    if len(files) > 20:
+        return jsonify({"success": False, "error": "Maximum 20 CVs per batch."}), 400
+
+    extracted = []
+    errors = []
+    for i, f in enumerate(files):
+        fname = f.filename.lower()
+        if not fname.endswith((".pdf", ".doc", ".docx")):
+            errors.append(f"{f.filename}: unsupported format, skipped")
+            continue
+        try:
+            text, method = extract_text(f)
+            if len(text) < 50:
+                errors.append(f"{f.filename}: could not read content, skipped")
+                continue
+            extracted.append({"filename": f.filename, "text": text, "method": method})
+        except Exception as e:
+            errors.append(f"{f.filename}: extraction failed ({e}), skipped")
+
+    if not extracted:
+        return jsonify({"success": False, "error": "No readable CVs found in upload.", "file_errors": errors}), 422
+
+    # Build combined prompt
+    combined = f"JOB TITLE: {job_title}\nTotal CVs: {len(extracted)}\n\n"
+    for idx, cv in enumerate(extracted, 1):
+        combined += f"--- CV {idx}: {cv['filename']} ---\n{cv['text'][:3000]}\n\n"
+
     try:
-        files = request.files.getlist("cvs[]")
-        if not files:
-            return jsonify({"success": False, "error": "No CV files provided"}), 400
-        if len(files) > 25:
-            return jsonify({"success": False, "error": "Maximum 25 CVs per batch"}), 400
+        results = call_claude(BATCH_SYSTEM, combined)
+        if not isinstance(results, list):
+            results = [results]
 
-        job_title = request.form.get("job_title", "")
-        logger.info(f"Batch: {len(files)} CVs, role: '{job_title}'")
+        # Sort by score descending, re-rank
+        results.sort(key=lambda x: x.get("score", 0), reverse=True)
+        for i, r in enumerate(results, 1):
+            r["rank"] = i
 
-        # Extract all text first
-        candidates = []
-        for i, cv_file in enumerate(files):
-            fname = cv_file.filename or f"cv_{i+1}.pdf"
-            try:
-                text = extract_text(cv_file)
-                logger.info(f"  [{i+1}] {fname}: {len(text)} chars")
-                candidates.append((i, text, fname))
-            except Exception as e:
-                logger.error(f"  [{i+1}] {fname}: {e}")
-                candidates.append((i, "", fname))
-
-        # Analyse each
-        results = []
-        for i, text, fname in candidates:
-            clean_name = re.sub(r'\.(pdf|docx?|txt)$', '', fname, flags=re.IGNORECASE)
-            if not text or len(text) < 80:
-                results.append({
-                    "candidate_name": clean_name,
-                    "overall_score": 0,
-                    "market_readiness": "Needs Improvement",
-                    "recommendation": "Do Not Hire",
-                    "executive_summary": "Could not extract text from this file.",
-                    "key_strengths": [],
-                    "key_concerns": ["File could not be read — may be scanned/image PDF or corrupted"],
-                    "behavioural_risk": "Unknown",
-                    "behavioural_notes": "Unable to assess.",
-                    "sections": {},
-                    "_file_index": i,
-                    "_filename": fname
-                })
-            else:
-                # Build rich job context prompt
-                job_context = f"""JOB TITLE: {job_title or 'Not specified'}
-DEPARTMENT: {request.form.get('job_dept', 'Not specified')}
-MINIMUM EXPERIENCE: {request.form.get('job_exp', 'Any')} years
-EDUCATION REQUIRED: {request.form.get('job_edu', 'Any')}
-EMPLOYMENT TYPE: {request.form.get('job_type', 'Full-time')}
-REQUIRED SKILLS: {request.form.get('job_skills', 'Not specified')}
-DISQUALIFYING CRITERIA: {request.form.get('job_disq', 'None specified')}
-
-JOB ADVERT / DESCRIPTION:
-{request.form.get('job_desc', 'No detailed description provided.')}
-
-SCORING WEIGHTS (1-10, higher = more important):
-{request.form.get('weights', '{}')}
-"""
-                prompt = f"""{job_context}
-
-CANDIDATE CV:
-{text}"""
-                try:
-                    raw = call_claude(BATCH_SYSTEM, prompt, max_tokens=1500)
-                    result = parse_json_response(raw)
-                    result["_file_index"] = i
-                    result["_filename"] = fname
-                    results.append(result)
-                except Exception as e:
-                    logger.error(f"Claude failed for {fname}: {e}")
-                    results.append({
-                        "candidate_name": clean_name,
-                        "overall_score": 0,
-                        "market_readiness": "Needs Improvement",
-                        "recommendation": "Do Not Hire",
-                        "executive_summary": "Analysis failed for this candidate.",
-                        "key_strengths": [],
-                        "key_concerns": [f"AI analysis error: {str(e)[:80]}"],
-                        "behavioural_risk": "Unknown",
-                        "behavioural_notes": "Unable to assess.",
-                        "sections": {},
-                        "_file_index": i,
-                        "_filename": fname
-                    })
-            gc.collect()
-
-        results.sort(key=lambda x: x.get("overall_score", 0), reverse=True)
-        for rank, r in enumerate(results, 1):
-            r["rank"] = rank
-
-        scored = [r.get("overall_score", 0) for r in results if r.get("overall_score", 0) > 0]
-        hire_count = sum(1 for r in results if r.get("recommendation") == "Hire")
-        consider_count = sum(1 for r in results if r.get("recommendation") == "Consider")
-
+        logger.info(f"[/analyze-batch] SUCCESS job={job_title} candidates={len(results)}")
         return jsonify({
             "success": True,
             "job_title": job_title,
             "total_candidates": len(results),
-            "summary": {
-                "hire": hire_count,
-                "consider": consider_count,
-                "do_not_hire": len(results) - hire_count - consider_count,
-                "average_score": round(sum(scored)/len(scored)) if scored else 0,
-                "top_candidate": results[0].get("candidate_name") if results else None
-            },
-            "ranked_candidates": results
+            "analysed_at": ts,
+            "file_errors": errors,
+            "candidates": results,
         })
 
+    except json.JSONDecodeError as e:
+        logger.error(f"[/analyze-batch] JSON parse error: {e}")
+        return jsonify({"success": False, "error": "Analysis engine returned unexpected response. Please try again."}), 502
     except Exception as e:
-        logger.error(f"Batch error: {e}")
-        return jsonify({"success": False, "error": str(e)}), 500
+        logger.error(f"[/analyze-batch] ERROR: {e}", exc_info=True)
+        return jsonify({"success": False, "error": "Batch analysis failed. Please try again."}), 500
 
 
-@app.errorhandler(413)
-def too_large(e):
-    return jsonify({"success": False, "error": "File too large. Maximum 50MB per file."}), 413
-
-
+# ── run ───────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=False)
