@@ -26,6 +26,16 @@ print("=== DLC BACKEND V15B ACTIVE ===")
 
 # ── Standard library ──────────────────────────────────────────────────────
 import gc
+import os as _os
+
+# ── DEFENSIVE FIX: Clear proxy env vars before ANY import that touches httpx.
+# Render may set HTTP_PROXY / HTTPS_PROXY on its infrastructure.
+# If present, the anthropic SDK reads them and passes proxies= to httpx.Client()
+# which was removed in httpx 0.28.0 → TypeError crash.
+# We clear them here so the SDK never attempts proxy injection.
+for _pv in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy",
+            "ALL_PROXY", "all_proxy", "NO_PROXY", "no_proxy"):
+    _os.environ.pop(_pv, None)
 import io
 import json
 import logging
