@@ -167,6 +167,7 @@ def root():
 @app.route("/analyze", methods=["POST"])
 def analyze():
     ts = datetime.utcnow().isoformat()
+    is_admin = check_admin(request)
     name = request.form.get("name", "Unknown")
     email = request.form.get("email", "")
     file = request.files.get("file")
@@ -234,13 +235,26 @@ def analyze():
 @app.route("/analyze-batch", methods=["POST"])
 def analyze_batch():
     ts = datetime.utcnow().isoformat()
-    job_title = request.form.get("job_title", "Open Position")
+    job_title   = request.form.get("job_title", "Open Position")
+    job_dept    = request.form.get("job_dept", "")
+    job_exp     = request.form.get("job_exp", "")
+    job_edu     = request.form.get("job_edu", "")
+    job_type    = request.form.get("job_type", "")
+    job_skills  = request.form.get("job_skills", "")
+    job_desc    = request.form.get("job_desc", "")
+    job_disq    = request.form.get("job_disq", "")
+    weights_raw = request.form.get("weights", "{}")
+    try:
+        weights = json.loads(weights_raw)
+    except Exception:
+        weights = {}
+
     files = request.files.getlist("files") or request.files.getlist("cvs[]")
 
     logger.info(f"[/analyze-batch] job={job_title} count={len(files)} ts={ts}")
 
     if not files or len(files) == 0:
-        return jsonify({"success": False, "error": "No CV files uploaded."}), 400
+        return jsonify({"success": False, "error": "No CV files provided."}), 400
     if len(files) > 20:
         return jsonify({"success": False, "error": "Maximum 20 CVs per batch."}), 400
 
@@ -263,17 +277,26 @@ def analyze_batch():
     if not extracted:
         return jsonify({"success": False, "error": "No readable CVs found in upload.", "file_errors": errors}), 422
 
-    # Build combined prompt
-    combined = f"JOB TITLE: {job_title}\nTotal CVs: {len(extracted)}\n\n"
+    # Build rich job context for AI
+    job_context = f"POSITION: {job_title}\n"
+    if job_dept:    job_context += f"DEPARTMENT: {job_dept}\n"
+    if job_exp:     job_context += f"MINIMUM EXPERIENCE: {job_exp}+ years\n"
+    if job_edu:     job_context += f"EDUCATION REQUIREMENT: {job_edu}\n"
+    if job_type:    job_context += f"EMPLOYMENT TYPE: {job_type}\n"
+    if job_skills:  job_context += f"KEY SKILLS REQUIRED: {job_skills}\n"
+    if job_desc:    job_context += f"ROLE DESCRIPTION: {job_desc}\n"
+    if job_disq:    job_context += f"DISQUALIFYING FACTORS: {job_disq}\n"
+    if weights:     job_context += f"SCORING WEIGHTS: {json.dumps(weights)}\n"
+
+    combined = job_context + f"\nTotal Candidates: {len(extracted)}\n\n"
     for idx, cv in enumerate(extracted, 1):
-        combined += f"--- CV {idx}: {cv['filename']} ---\n{cv['text'][:3000]}\n\n"
+        combined += f"--- CANDIDATE {idx}: {cv['filename']} ---\n{cv['text'][:3000]}\n\n"
 
     try:
         results = call_claude(BATCH_SYSTEM, combined)
         if not isinstance(results, list):
             results = [results]
 
-        # Sort by score descending, re-rank
         results.sort(key=lambda x: x.get("score", 0), reverse=True)
         for i, r in enumerate(results, 1):
             r["rank"] = i
