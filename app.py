@@ -1187,3 +1187,37 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     log.info("Starting DLC backend %s on port %d", BACKEND_VERSION, port)
     app.run(host="0.0.0.0", port=port, debug=False)
+@app.route('/optimize-application', methods=['POST'])
+def optimize_application():
+    try:
+        file = request.files.get('file')
+        job_description = request.form.get('job_description')
+
+        if not file or not job_description:
+            return jsonify({
+                "success": False,
+                "error": "Missing CV or job description"
+            })
+
+        # Simulated ATS processing (replace later with real logic)
+        optimized_cv = {
+            "summary": "Results-driven professional aligned to the job requirements, with strong experience in supplier management, cost control, and performance optimisation.",
+            "experience": [
+                "Managed supplier selection and evaluation based on cost, quality, and delivery timelines.",
+                "Maintained strong supplier relationships and monitored performance metrics.",
+                "Implemented procurement strategies that improved efficiency and reduced costs."
+            ]
+        }
+
+        return jsonify({
+            "success": True,
+            "ats_score": 82,
+            "job_match_score": 76,
+            "optimized_cv": optimized_cv
+        })
+
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        })
