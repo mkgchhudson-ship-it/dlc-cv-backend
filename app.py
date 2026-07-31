@@ -1055,16 +1055,23 @@ Work through these steps using the CV (and, if provided, the target job descript
 3. MATCH (only if a job description was provided) — compare CV to role: skills overlap, experience alignment, keyword overlap, title alignment.
 4. IDENTIFY GAPS (only if a job description was provided) — required skills missing or under-evidenced, weakly-written bullets, keywords the role uses that the CV doesn't.
 5. IDENTIFY RISKS — flag realistic hiring-manager concerns ONLY when the evidence genuinely supports them (job hopping, unexplained gaps, over/underqualification, ATS-unfriendly formatting). Do not invent risks.
-6. SCORE:
-   - ats_compatibility_score (0-100): how well-structured and machine-parseable the CV itself is.
-   - job_match_score (0-100 or null): only if a job description was provided — how well the candidate matches THIS role. Return null if no job description was given.
-   - hiring_readiness_score (0-100): weighted composite. If a job description was provided: ATS Compatibility 25% / Job Match 40% / Content Strength 20% / Risk Factors 15%. If no job description was provided, reweight as: ATS Compatibility 40% / Content Strength 40% / Risk Factors 20%.
+6. SCORE — produce these metrics (0-100 each unless noted), each grounded in real evidence from the CV, never inflated for effect:
+   - ats_compatibility_score: how well-structured and machine-parseable the CV itself is.
+   - job_match_score (or null): only if a job description was provided — how well the candidate matches THIS role.
+   - formatting_quality_score: structural clarity — consistent sections, clean chronology, no ATS-breaking elements.
+   - keyword_optimization_score (or null if no job description): how well role-relevant keywords are naturally represented.
+   - professional_positioning_score: strength and clarity of the professional summary and title framing.
+   - recruiter_readiness_score: how quickly a recruiter could assess fit within a 7-second scan.
+   - vacancy_alignment_score (or null if no job description): overall fit against the specific vacancy's stated requirements.
+   - evidence_strength_score: how well claims are backed by specifics (employers, tenures, quantified outcomes) rather than vague responsibility statements.
+   - hiring_readiness_score: weighted composite headline score. If a job description was provided: ATS Compatibility 25% / Job Match 40% / Content Strength 20% / Risk Factors 15%. If no job description was provided, reweight as: ATS Compatibility 40% / Content Strength 40% / Risk Factors 20%.
 7. BUILD THE FULL CV — produce a complete, corporate, ATS-compliant CV using ONLY the candidate's real, provided experience and qualifications:
    - Professional summary: 4-5 lines, strong corporate language, naming years of experience (estimate conservatively from the CV's own dates if not explicit), industry focus, key strengths, and value to an employer. Do NOT use generic filler phrases such as "results-driven professional," "team player," "dynamic professional," "passionate about," or "synergy."
    - Core competencies: 8-12 concise ATS keyword phrases genuinely evidenced by the candidate's real background — never invent expertise the CV doesn't support.
    - Professional experience: for EACH role found in the CV, rewrite 4-6 achievement-based bullets using strong action verbs (Led, Implemented, Managed, Improved, Delivered, Negotiated, Streamlined). Never fabricate metrics, outcomes, or responsibilities not implied by the original content.
    - Education: cleanly rewritten from what the CV states.
    - Certifications: list only what the CV or supporting documents actually evidence. Return an empty list if none are found.
+8. RECRUITER'S FIRST IMPRESSION — write 2-3 sentences in the voice of a senior HR consultant giving a genuine, candid first read of this candidate, as if briefing a hiring manager. Name the specific professional identity this CV projects, note one genuine strength, and end with one concrete, specific suggestion for what would strengthen future applications (e.g. a category of evidence that's currently thin — quantified outcomes, budget/portfolio size, named methodologies). This must read as genuine consultative judgment, not a restatement of the summary, and must be grounded only in what the CV actually shows.
 
 Use professional HR language throughout.
 
@@ -1075,9 +1082,16 @@ Return ONLY a valid JSON object — no markdown, no preamble, no commentary:
 {
   "ats_score": <0-100 integer>,
   "job_match_score": <0-100 integer, or null if no job description was provided>,
+  "formatting_quality_score": <0-100 integer>,
+  "keyword_optimization_score": <0-100 integer, or null if no job description was provided>,
+  "professional_positioning_score": <0-100 integer>,
+  "recruiter_readiness_score": <0-100 integer>,
+  "vacancy_alignment_score": <0-100 integer, or null if no job description was provided>,
+  "evidence_strength_score": <0-100 integer>,
   "hiring_readiness_score": <0-100 integer>,
   "gaps": ["<gap 1>", "<gap 2>"],
   "risks": ["<risk, only if genuinely evidenced — empty array if none>"],
+  "recruiters_first_impression": "<2-3 sentence senior-consultant narrative, per step 8>",
   "cv_document": {
     "header": {
       "full_name": "<candidate's real name, or '[Not provided]'>",
@@ -1210,6 +1224,188 @@ def build_cv_docx(cv_document: dict) -> bytes:
     return buf.getvalue()
 
 
+SCORE_LABELS = {
+    "ats_score": "ATS Compatibility",
+    "job_match_score": "Job Match",
+    "formatting_quality_score": "Formatting Quality",
+    "keyword_optimization_score": "Keyword Optimisation",
+    "professional_positioning_score": "Professional Positioning",
+    "recruiter_readiness_score": "Recruiter Readiness",
+    "vacancy_alignment_score": "Vacancy Alignment",
+    "evidence_strength_score": "Evidence Strength",
+}
+
+
+def build_ats_report_pdf(meta: dict) -> bytes:
+    """
+    Generates the downloadable 'ATS Report' — a real PDF built with
+    reportlab (pure Python, no LibreOffice/soffice dependency, safe to
+    run on Render). Summarises scores, gaps, risks, and the Recruiter's
+    First Impression narrative.
+    """
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import mm
+    from reportlab.lib.colors import HexColor
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.enums import TA_LEFT
+    import io as _io
+
+    GOLD = HexColor("#a88820")
+    INK  = HexColor("#111417")
+    GREY = HexColor("#5b6169")
+
+    buf = _io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4,
+                             topMargin=22*mm, bottomMargin=18*mm,
+                             leftMargin=20*mm, rightMargin=20*mm)
+    styles = getSampleStyleSheet()
+    h1 = ParagraphStyle("h1", parent=styles["Heading1"], textColor=INK, fontSize=18, spaceAfter=4)
+    eyebrow = ParagraphStyle("eyebrow", parent=styles["Normal"], textColor=GOLD, fontSize=9,
+                             spaceAfter=14, alignment=TA_LEFT)
+    h2 = ParagraphStyle("h2", parent=styles["Heading2"], textColor=INK, fontSize=12, spaceBefore=16, spaceAfter=6)
+    body = ParagraphStyle("body", parent=styles["Normal"], textColor=INK, fontSize=10, leading=15)
+    dim = ParagraphStyle("dim", parent=styles["Normal"], textColor=GREY, fontSize=9, leading=13)
+
+    story = []
+    story.append(Paragraph("DIRECT LABOUR CONSULT — CAREER INTELLIGENCE REPORT", eyebrow))
+    story.append(Paragraph("ATS &amp; Recruiter Readiness Report", h1))
+    story.append(Spacer(1, 6))
+
+    hr_score = meta.get("hiring_readiness_score", 0)
+    story.append(Paragraph(f"Overall Hiring Readiness Score: <b>{hr_score}/100</b>", body))
+    story.append(Spacer(1, 10))
+
+    rows = [["Metric", "Score"]]
+    for key, label in SCORE_LABELS.items():
+        val = meta.get(key)
+        if val is not None:
+            rows.append([label, f"{val}/100"])
+    tbl = Table(rows, colWidths=[110*mm, 40*mm])
+    tbl.setStyle(TableStyle([
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("TEXTCOLOR", (0, 0), (-1, 0), INK),
+        ("TEXTCOLOR", (0, 1), (-1, -1), GREY),
+        ("FONTSIZE", (0, 0), (-1, -1), 9.5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ("TOPPADDING", (0, 0), (-1, -1), 6),
+        ("LINEBELOW", (0, 0), (-1, 0), 0.75, GOLD),
+        ("LINEBELOW", (0, 1), (-1, -2), 0.4, HexColor("#e5e7eb")),
+    ]))
+    story.append(tbl)
+
+    if meta.get("recruiters_first_impression"):
+        story.append(Paragraph("Recruiter's First Impression", h2))
+        story.append(Paragraph(meta["recruiters_first_impression"], body))
+
+    gaps = meta.get("gaps") or []
+    if gaps:
+        story.append(Paragraph("Gaps Identified", h2))
+        for g in gaps:
+            story.append(Paragraph(f"&bull; {g}", body))
+
+    risks = meta.get("risks") or []
+    if risks:
+        story.append(Paragraph("Risk Flags", h2))
+        for r in risks:
+            story.append(Paragraph(f"&bull; {r}", body))
+
+    story.append(Spacer(1, 20))
+    story.append(Paragraph(
+        "Prepared by Direct Labour Consult — HR Advisory, Career Advisory &amp; Recruitment Intelligence.",
+        dim
+    ))
+
+    doc.build(story)
+    return buf.getvalue()
+
+
+def build_cv_pdf(cv_document: dict) -> bytes:
+    """
+    Generates the 'Recruiter-Ready CV' as a real PDF (reportlab), mirroring
+    build_cv_docx()'s structure so both formats present identically.
+    """
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import mm
+    from reportlab.lib.colors import HexColor
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.enums import TA_CENTER
+    import io as _io
+
+    INK  = HexColor("#111417")
+    GOLD = HexColor("#a88820")
+    GREY = HexColor("#5b6169")
+
+    buf = _io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4,
+                             topMargin=20*mm, bottomMargin=18*mm,
+                             leftMargin=20*mm, rightMargin=20*mm)
+    styles = getSampleStyleSheet()
+    name_style = ParagraphStyle("name", parent=styles["Title"], textColor=INK, fontSize=20,
+                                 alignment=TA_CENTER, spaceAfter=2)
+    title_style = ParagraphStyle("title", parent=styles["Normal"], textColor=GREY, fontSize=12,
+                                  alignment=TA_CENTER, spaceAfter=2)
+    contact_style = ParagraphStyle("contact", parent=styles["Normal"], textColor=GREY, fontSize=9,
+                                    alignment=TA_CENTER, spaceAfter=14)
+    h2 = ParagraphStyle("h2", parent=styles["Heading2"], textColor=GOLD, fontSize=11, spaceBefore=12, spaceAfter=6)
+    body = ParagraphStyle("body", parent=styles["Normal"], textColor=INK, fontSize=10, leading=15)
+    bullet = ParagraphStyle("bullet", parent=body, leftIndent=12, bulletIndent=0, spaceAfter=3)
+    role_title = ParagraphStyle("role_title", parent=styles["Normal"], textColor=INK, fontSize=10.5,
+                                 fontName="Helvetica-Bold", spaceBefore=8, spaceAfter=1)
+    role_dates = ParagraphStyle("role_dates", parent=styles["Normal"], textColor=GREY, fontSize=9,
+                                 fontName="Helvetica-Oblique", spaceAfter=4)
+
+    header = cv_document.get("header", {}) or {}
+    story = [
+        Paragraph(header.get("full_name") or "[Not provided]", name_style),
+        Paragraph(header.get("professional_title") or "", title_style),
+    ]
+    contact_bits = [b for b in [header.get("location"), header.get("email"), header.get("phone")]
+                    if b and b != "[Not provided]"]
+    if contact_bits:
+        story.append(Paragraph(" &middot; ".join(contact_bits), contact_style))
+
+    if cv_document.get("professional_summary"):
+        story.append(Paragraph("Professional Summary", h2))
+        story.append(Paragraph(cv_document["professional_summary"], body))
+
+    comps = cv_document.get("core_competencies") or []
+    if comps:
+        story.append(Paragraph("Core Competencies", h2))
+        story.append(Paragraph(" &nbsp;&bull;&nbsp; ".join(comps), body))
+
+    experience = cv_document.get("professional_experience") or []
+    if experience:
+        story.append(Paragraph("Professional Experience", h2))
+        for role in experience:
+            story.append(Paragraph(f"{role.get('title','')} — {role.get('employer','')}", role_title))
+            if role.get("dates"):
+                story.append(Paragraph(role["dates"], role_dates))
+            for b in role.get("bullets", []):
+                story.append(Paragraph(f"&bull; {b}", bullet))
+
+    education = cv_document.get("education") or []
+    if education:
+        story.append(Paragraph("Education", h2))
+        for edu in education:
+            line = edu.get("qualification", "")
+            if edu.get("institution"):
+                line += f" — {edu['institution']}"
+            if edu.get("dates"):
+                line += f" ({edu['dates']})"
+            story.append(Paragraph(f"&bull; {line}", bullet))
+
+    certs = cv_document.get("certifications") or []
+    if certs:
+        story.append(Paragraph("Certifications", h2))
+        for c in certs:
+            story.append(Paragraph(f"&bull; {c}", bullet))
+
+    doc.build(story)
+    return buf.getvalue()
+
+
 SUPPORTING_DOC_MAX_COUNT = 5
 SUPPORTING_DOC_MAX_SIZE  = 10 * 1024 * 1024
 SUPPORTING_DOC_ALLOWED   = (".pdf", ".doc", ".docx", ".jpg", ".jpeg", ".png")
@@ -1272,6 +1468,53 @@ def process_supporting_docs(files):
     return supporting_text, image_blocks, used_count
 
 
+@app.route("/generate-pdf-report", methods=["POST"])
+def generate_pdf_report():
+    """
+    Downloads the 'ATS Report (PDF)'. Accepts the meta JSON already
+    returned by /optimize-application (cached client-side) — no need to
+    re-upload the CV or re-call Claude, since nothing here needs new
+    analysis, only a different output format of already-generated data.
+    """
+    try:
+        meta = request.get_json(force=True, silent=True) or {}
+        if not meta:
+            return jsonify({"success": False, "error": "No report data provided."}), 400
+        pdf_bytes = build_ats_report_pdf(meta)
+        return send_file(
+            io.BytesIO(pdf_bytes),
+            mimetype="application/pdf",
+            as_attachment=True,
+            download_name="DLC_ATS_Report.pdf",
+        )
+    except Exception as e:
+        log.error(f"[/generate-pdf-report] ERROR: {e}", exc_info=True)
+        return jsonify({"success": False, "error": "Could not generate the ATS report. Please try again."}), 500
+
+
+@app.route("/generate-pdf-cv", methods=["POST"])
+def generate_pdf_cv():
+    """
+    Downloads the 'Recruiter-Ready CV (PDF)'. Accepts the cv_document JSON
+    already returned by /optimize-application (cached client-side).
+    """
+    try:
+        body = request.get_json(force=True, silent=True) or {}
+        cv_document = body.get("cv_document") or body
+        if not cv_document:
+            return jsonify({"success": False, "error": "No CV data provided."}), 400
+        pdf_bytes = build_cv_pdf(cv_document)
+        return send_file(
+            io.BytesIO(pdf_bytes),
+            mimetype="application/pdf",
+            as_attachment=True,
+            download_name="DLC_Optimised_CV.pdf",
+        )
+    except Exception as e:
+        log.error(f"[/generate-pdf-cv] ERROR: {e}", exc_info=True)
+        return jsonify({"success": False, "error": "Could not generate the CV PDF. Please try again."}), 500
+
+
 @app.route("/optimize-application", methods=["POST"])
 def optimize_application():
     """
@@ -1329,15 +1572,22 @@ def optimize_application():
         docx_bytes = build_cv_docx(cv_document)
 
         meta = {
-            "ats_score":              result.get("ats_score", 0),
-            "job_match_score":        result.get("job_match_score"),
-            "hiring_readiness_score": result.get("hiring_readiness_score", 0),
-            "gaps":                   result.get("gaps", []),
-            "risks":                  result.get("risks", []),
-            "cv_preview":             cv_document,
-            "keywords_added":         result.get("keywords_added", []),
-            "extraction_method":      method,
-            "optimised_at":           ts,
+            "ats_score":                      result.get("ats_score", 0),
+            "job_match_score":                result.get("job_match_score"),
+            "formatting_quality_score":        result.get("formatting_quality_score", 0),
+            "keyword_optimization_score":      result.get("keyword_optimization_score"),
+            "professional_positioning_score":  result.get("professional_positioning_score", 0),
+            "recruiter_readiness_score":       result.get("recruiter_readiness_score", 0),
+            "vacancy_alignment_score":         result.get("vacancy_alignment_score"),
+            "evidence_strength_score":         result.get("evidence_strength_score", 0),
+            "hiring_readiness_score":          result.get("hiring_readiness_score", 0),
+            "gaps":                            result.get("gaps", []),
+            "risks":                           result.get("risks", []),
+            "recruiters_first_impression":     result.get("recruiters_first_impression", ""),
+            "cv_preview":                      cv_document,
+            "keywords_added":                  result.get("keywords_added", []),
+            "extraction_method":               method,
+            "optimised_at":                    ts,
         }
         if docs_used > 0:
             meta["supporting_docs_note"] = "Additional certifications and qualifications have been integrated"
