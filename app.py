@@ -1071,6 +1071,7 @@ Work through these steps using the CV (and, if provided, the target job descript
    - Professional experience: for EACH role found in the CV, rewrite 4-6 achievement-based bullets using strong action verbs (Led, Implemented, Managed, Improved, Delivered, Negotiated, Streamlined). Never fabricate metrics, outcomes, or responsibilities not implied by the original content.
    - Education: cleanly rewritten from what the CV states.
    - Certifications: list only what the CV or supporting documents actually evidence. Return an empty list if none are found.
+   - References: if the candidate's CV lists actual named referees (name, title/relationship, organisation, and/or contact details), include exactly what is stated — never invent names, titles, organisations, or contact details. If the CV does not list named referees, set "references_available_on_request" to true and leave the references list empty — do NOT fabricate placeholder people.
 8. RECRUITER'S FIRST IMPRESSION — write 2-3 sentences in the voice of a senior HR consultant giving a genuine, candid first read of this candidate, as if briefing a hiring manager. Name the specific professional identity this CV projects, note one genuine strength, and end with one concrete, specific suggestion for what would strengthen future applications (e.g. a category of evidence that's currently thin — quantified outcomes, budget/portfolio size, named methodologies). This must read as genuine consultative judgment, not a restatement of the summary, and must be grounded only in what the CV actually shows.
 
 Use professional HR language throughout.
@@ -1113,7 +1114,11 @@ Return ONLY a valid JSON object — no markdown, no preamble, no commentary:
     "education": [
       {"qualification": "<degree/qualification>", "institution": "<institution>", "dates": "<if stated>"}
     ],
-    "certifications": ["<certification 1>", "... or empty array if none found"]
+    "certifications": ["<certification 1>", "... or empty array if none found"],
+    "references": [
+      {"name": "<referee's real name, only if stated>", "title": "<referee's title/relationship, if stated>", "organisation": "<if stated>", "contact": "<if stated>"}
+    ],
+    "references_available_on_request": <true if no named referees were found in the CV, otherwise false>
   },
   "keywords_added": ["<keyword 1>", "<keyword 2>"]
 }"""
@@ -1218,6 +1223,20 @@ def build_cv_docx(cv_document: dict) -> bytes:
         add_heading("Certifications")
         for c in certs:
             doc.add_paragraph(c, style="List Bullet")
+
+    references = cv_document.get("references") or []
+    if references:
+        add_heading("References")
+        for ref in references:
+            line = ref.get("name", "")
+            bits = [ref.get("title"), ref.get("organisation"), ref.get("contact")]
+            bits = [b for b in bits if b]
+            if bits:
+                line += " — " + ", ".join(bits)
+            doc.add_paragraph(line, style="List Bullet")
+    elif cv_document.get("references_available_on_request"):
+        add_heading("References")
+        doc.add_paragraph("Available upon request.")
 
     buf = _io.BytesIO()
     doc.save(buf)
@@ -1401,6 +1420,20 @@ def build_cv_pdf(cv_document: dict) -> bytes:
         story.append(Paragraph("Certifications", h2))
         for c in certs:
             story.append(Paragraph(f"&bull; {c}", bullet))
+
+    references = cv_document.get("references") or []
+    if references:
+        story.append(Paragraph("References", h2))
+        for ref in references:
+            line = ref.get("name", "")
+            bits = [ref.get("title"), ref.get("organisation"), ref.get("contact")]
+            bits = [b for b in bits if b]
+            if bits:
+                line += " — " + ", ".join(bits)
+            story.append(Paragraph(f"&bull; {line}", bullet))
+    elif cv_document.get("references_available_on_request"):
+        story.append(Paragraph("References", h2))
+        story.append(Paragraph("Available upon request.", body))
 
     doc.build(story)
     return buf.getvalue()
