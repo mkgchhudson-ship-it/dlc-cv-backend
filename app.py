@@ -1119,6 +1119,7 @@ def call_claude_ats(system_prompt: str, user_content: str, image_blocks=None) ->
     msg = _client.messages.create(
         model=ANTHROPIC_MODEL,
         max_tokens=MAX_TOKENS_ATS,
+        system=system_prompt,
         messages=[{"role": "user", "content": content}],
     )
     raw = msg.content[0].text.strip()
