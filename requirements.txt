@@ -19,3 +19,6 @@ Pillow==11.0.0
 # ── Word document extraction AND generation ───────────────────────────────
 # (also used by build_cv_docx() in the ATS engine to write the output CV)
 python-docx==1.1.2
+# ── PDF generation for ATS Report and CV PDF downloads (pure Python, no
+#    LibreOffice/soffice binary dependency — safe to run on Render) ────────
+reportlab==4.4.10
