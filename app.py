@@ -1045,6 +1045,8 @@ def internal_error(exc):
 
 from flask import send_file
 import base64
+import smtplib
+from email.message import EmailMessage
 
 ATS_OPTIMIZE_SYSTEM = """You are the DLC ATS Application Engine™ — acting simultaneously as an Applicant Tracking System and a Chartered HR Practitioner / Occupational Psychologist at Direct Labour Consult. You evaluate one candidate against one specific job description, the way a real recruiter and a real ATS would, and then produce an optimised application.
 
@@ -1653,6 +1655,127 @@ def optimize_application():
         }), 500
 
 
+
+
+# ══════════════════════════════════════════════════════════════════════════
+#  ENTRY POINT
+# ══════════════════════════════════════════════════════════════════════════
+
+# ══════════════════════════════════════════════════════════════════════════
+# ── CAREERS APPLICATION — additive feature, isolated from everything above.
+#    No database exists in this stack, so submissions are emailed directly
+#    to the recruitment inbox with all documents attached. Requires real
+#    SMTP credentials set as environment variables (see below) — without
+#    them this endpoint will return a clear configuration error rather than
+#    silently failing or pretending to have sent something it didn't.
+# ══════════════════════════════════════════════════════════════════════════
+
+CAREERS_MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB per document, matches the frontend limit
+CAREERS_REQUIRED_FILES = ("cv", "cover_letter_file", "degree_certificate")
+CAREERS_OPTIONAL_FILES = ("transcript",)
+
+SMTP_HOST = os.environ.get("SMTP_HOST", "")
+SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
+SMTP_USER = os.environ.get("SMTP_USER", "")
+SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "")
+RECRUITMENT_INBOX = os.environ.get("RECRUITMENT_INBOX", "")
+
+
+@app.route("/careers/apply", methods=["POST"])
+def careers_apply():
+    """
+    Receives a careers application (text fields + PDF attachments) and
+    emails it to the recruitment inbox via SMTP. Requires SMTP_HOST,
+    SMTP_PORT, SMTP_USER, SMTP_PASSWORD, and RECRUITMENT_INBOX to be set
+    as environment variables on Render — without them, this returns a
+    clear 503 configuration error rather than a false "success".
+    """
+    ts = datetime.now(timezone.utc).isoformat()
+
+    if not (SMTP_HOST and SMTP_USER and SMTP_PASSWORD and RECRUITMENT_INBOX):
+        log.error("[/careers/apply] SMTP not configured — missing environment variables")
+        return jsonify({
+            "success": False,
+            "error": "Applications cannot be submitted right now. Please contact Direct Labour Consult directly."
+        }), 503
+
+    first_name = (request.form.get("first_name") or "").strip()
+    last_name = (request.form.get("last_name") or "").strip()
+    email = (request.form.get("email") or "").strip()
+    phone = (request.form.get("phone") or "").strip()
+    location = (request.form.get("location") or "").strip()
+    qualification = (request.form.get("qualification") or "").strip()
+    institution = (request.form.get("institution") or "").strip()
+    year_graduated = (request.form.get("year_graduated") or "").strip()
+    cover_letter_text = (request.form.get("cover_letter_text") or "").strip()
+    role = (request.form.get("role") or "Careers Application").strip()
+
+    if not all([first_name, last_name, email, phone, location, qualification, institution, year_graduated]):
+        return jsonify({"success": False, "error": "Please complete all required fields."}), 400
+    if "@" not in email:
+        return jsonify({"success": False, "error": "Please provide a valid email address."}), 400
+
+    attachments = []
+    for field in CAREERS_REQUIRED_FILES:
+        f = request.files.get(field)
+        if not f or not f.filename:
+            return jsonify({"success": False, "error": f"Missing required document: {field.replace('_', ' ')}."}), 400
+        if not f.filename.lower().endswith(".pdf"):
+            return jsonify({"success": False, "error": "All documents must be PDF files."}), 400
+        data = f.read()
+        if len(data) > CAREERS_MAX_FILE_SIZE:
+            return jsonify({"success": False, "error": f"{f.filename} exceeds the 10 MB limit."}), 400
+        attachments.append((f.filename, data))
+
+    for field in CAREERS_OPTIONAL_FILES:
+        f = request.files.get(field)
+        if f and f.filename:
+            if not f.filename.lower().endswith(".pdf"):
+                return jsonify({"success": False, "error": "All documents must be PDF files."}), 400
+            data = f.read()
+            if len(data) > CAREERS_MAX_FILE_SIZE:
+                return jsonify({"success": False, "error": f"{f.filename} exceeds the 10 MB limit."}), 400
+            attachments.append((f.filename, data))
+
+    try:
+        msg = EmailMessage()
+        msg["Subject"] = f"New Application: {role} — {first_name} {last_name}"
+        msg["From"] = SMTP_USER
+        msg["To"] = RECRUITMENT_INBOX
+        msg["Reply-To"] = email
+
+        body = (
+            f"New application received for: {role}\n\n"
+            f"Name: {first_name} {last_name}\n"
+            f"Email: {email}\n"
+            f"Phone: {phone}\n"
+            f"Location: {location}\n"
+            f"Highest Qualification: {qualification}\n"
+            f"Institution: {institution}\n"
+            f"Year Graduated: {year_graduated}\n\n"
+            f"Cover Letter (text):\n{cover_letter_text or '[Not provided — see attached document]'}\n\n"
+            f"Submitted: {ts}\n"
+            f"Documents attached: {', '.join(a[0] for a in attachments)}\n"
+        )
+        msg.set_content(body)
+
+        for filename, data in attachments:
+            msg.add_attachment(data, maintype="application", subtype="pdf", filename=filename)
+
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
+            server.starttls()
+            server.login(SMTP_USER, SMTP_PASSWORD)
+            server.send_message(msg)
+
+        log.info(f"[/careers/apply] SUCCESS name={first_name} {last_name} email={email}")
+        return jsonify({"success": True})
+
+    except Exception as e:
+        log.error(f"[/careers/apply] ERROR: {e}", exc_info=True)
+        return jsonify({
+            "success": False,
+            "error": "We could not submit your application due to a technical issue. Please try again or email us directly."
+        }), 500
 
 
 # ══════════════════════════════════════════════════════════════════════════
